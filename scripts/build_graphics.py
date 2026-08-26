@@ -288,32 +288,27 @@ def build_step_badge(out_dir: Path, n: int, size=176):
     im.save(out_dir / f"step_badge{n}.png")
 
 
-def build_caption(out_dir: Path, name: str, text: str, max_width=920, font_size=38):
-    f = sfont(font_size, "SemiBold")
+def build_caption(out_dir: Path, name: str, text: str, max_width=920, font_size=38, min_font_size=22):
+    """자막은 항상 한 줄로만 렌더링한다 (2026-08-27, 2~3줄로 늘어나는 게 지저분하다는
+    피드백으로 줄바꿈 대신 폰트 크기를 줄여서 한 줄에 맞추는 방식으로 변경)."""
     tmp = Image.new("RGBA", (10, 10))
     d0 = ImageDraw.Draw(tmp)
-    words = text.split(" ")
-    lines, cur = [], ""
-    for w_ in words:
-        test = (cur + " " + w_).strip()
-        if d0.textlength(test, font=f) > max_width - 60:
-            lines.append(cur)
-            cur = w_
-        else:
-            cur = test
-    if cur:
-        lines.append(cur)
-    line_h = 50
+    size = font_size
+    f = sfont(size, "SemiBold")
+    while d0.textlength(text, font=f) > max_width - 60 and size > min_font_size:
+        size -= 2
+        f = sfont(size, "SemiBold")
+
+    line_h = int(size * 1.3)
     pad = 20
-    h = line_h * len(lines) + pad * 2
+    h = line_h + pad * 2
     w = max_width
     pill = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(pill)
     d.rounded_rectangle([0, 0, w - 1, h - 1], radius=18, fill=(18, 14, 10, 175))
     d.rounded_rectangle([0, 0, w - 1, 2], radius=0, fill=(*GOLD_LIGHT[:3], 200))
-    for i, line in enumerate(lines):
-        lw = d0.textlength(line, font=f)
-        d.text(((w - lw) / 2, pad + i * line_h), line, font=f, fill=(250, 246, 238, 255))
+    lw = d0.textlength(text, font=f)
+    d.text(((w - lw) / 2, pad), text, font=f, fill=(250, 246, 238, 255))
     pill.save(out_dir / f"caption_{name}.png")
 
 
@@ -361,15 +356,19 @@ def build_product_assets(out_dir: Path, product_image_path: Path, frame_w=600):
     shadow_canvas = shadow_canvas.filter(ImageFilter.GaussianBlur(22))
     shadow_canvas.save(out_dir / "product_shadow.png")
 
-    refl_h = max(48, int(fh * 0.097))
+    # 2026-08-27: 카드와 간격이 좁아서(10px) 리플렉션의 둥근 모서리가 마치 카드
+    # 조각이 튀어나온 것처럼 보인다는 피드백 — 훨씬 짧고 옅게, 가우시안 블러로
+    # 윤곽선 자체를 흐려서 "형태가 있는 조각"이 아니라 은은한 광택 정도로만 보이게 함.
+    refl_h = max(20, int(fh * 0.035))
     reflection = ImageOps.flip(canvas).convert("RGBA").crop((0, 0, fw, refl_h))
     grad = Image.new("L", (fw, refl_h), 0)
     gd = ImageDraw.Draw(grad)
     for y in range(refl_h):
-        gd.line([(0, y), (fw, y)], fill=int(85 * (1 - y / refl_h)))
+        gd.line([(0, y), (fw, y)], fill=int(40 * (1 - y / refl_h)))
     r, g, b, a0 = reflection.split()
     a_arr = (np.asarray(a0).astype(float) * (np.asarray(grad).astype(float) / 255.0)).astype("uint8")
     reflection.putalpha(Image.fromarray(a_arr, mode="L"))
+    reflection = reflection.filter(ImageFilter.GaussianBlur(4))
     reflection.save(out_dir / "product_reflection.png")
 
     return canvas.size
