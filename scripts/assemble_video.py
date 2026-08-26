@@ -71,7 +71,7 @@ def assemble(work_dir: Path, out_path: Path):
         f"[pop0]adelay={pop_delays[0]}|{pop_delays[0]}[p0d];"
         f"[pop1]adelay={pop_delays[1]}|{pop_delays[1]}[p1d];"
         f"[pop2]adelay={pop_delays[2]}|{pop_delays[2]}[p2d];"
-        f"[7:a][p0d][p1d][p2d]amix=inputs=4:duration=first:dropout_transition=0[aout]",
+        f"[7:a][p0d][p1d][p2d]amix=inputs=4:duration=first:dropout_transition=0:normalize=0[aout]",
         "-map", "[vout]", "-map", "[aout]",
         "-t", str(narration_dur),
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-crf", "18",
@@ -119,7 +119,7 @@ def assemble(work_dir: Path, out_path: Path):
         f"[8:a]volume=0.7[wh0];[8:a]volume=0.7[wh1];"
         f"[wh0]adelay={whoosh1_ms}|{whoosh1_ms}[wh0d];"
         f"[wh1]adelay={whoosh2_ms}|{whoosh2_ms}[wh1d];"
-        "[aconcat][wh0d][wh1d]amix=inputs=3:duration=first:dropout_transition=0[aout]",
+        "[aconcat][wh0d][wh1d]amix=inputs=3:duration=first:dropout_transition=0:normalize=0[aout]",
         "-map", "[vconcat]", "-map", "[aout]",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-crf", "18",
         str(out_path),
