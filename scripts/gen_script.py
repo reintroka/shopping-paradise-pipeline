@@ -9,7 +9,9 @@
   "spec1_title": "성능", "spec1_body": "인텔 i5 · 16GB RAM",
   "spec2_title": "저장공간", "spec2_body": "512GB SSD (256GB×2 듀얼)",
   "spec3_title": "화면 · 무게", "spec3_body": "15.6형 FHD IPS · 초경량",
-  "narration_script": "인텔 코어 아이파이브에... (숫자는 반드시 한글 발음으로 풀어쓸 것)",
+  "narration_script1": "인텔 코어 아이파이브에... (숫자는 한글 발음으로 풀어쓸 것)",
+  "narration_script2": "저장공간은 오백십이 기가...",
+  "narration_script3": "화면은 큼직한 십오점육 인치인데...",
   "youtube_title": "...",
   "youtube_description_intro": "...",
   "x_post": "..."
@@ -38,11 +40,14 @@ PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 쇼츠 채널(쿠팡�
 - 스펙 설명(22초): 이 상품의 핵심 특징 3가지를 스펙카드용 제목(2~5자)+본문(15자 내외)으로.
   실제 상품명/카테고리에서 합리적으로 추론 가능한 특징만 쓰고 없는 스펙을 지어내지 마세요.
 - CTA(6초): 아바타가 말하는 마무리 멘트(cta_speech, "프로필 링크"를 언급하며 구매 유도)
-- narration_script: 스펙 설명 구간에서 나레이션으로 읽을 전체 문장(3개 스펙을 자연스럽게
-  연결). **이 필드만 숫자를 한글 발음으로 풀어쓸 것** (예: "15.6인치"→"십오점육 인치",
-  "512GB"→"오백십이 기가", "i5"→"아이파이브") — TTS가 숫자를 잘못 읽는 걸 방지하기 위함.
-  narration_script는 화면에 절대 글자로 표시되지 않고 음성으로만 재생됨.
-- **주의: narration_script를 제외한 모든 필드(spec1~3_title/body, hook_title_line1/2,
+- narration_script1/2/3: 스펙1/2/3 각각을 설명하는 나레이션 한 문장씩(스펙카드 1개당
+  하나, 각 8~20자 내외 짧은 구어체 — 카드가 바뀔 때마다 화면이 컷 전환되므로 문장도
+  그 타이밍에 맞춰 각각 독립적으로 완결되어야 함. 3개를 이어 읽으면 자연스러운
+  설명이 되도록). **이 세 필드만 숫자를 한글 발음으로 풀어쓸 것** (예: "15.6인치"→
+  "십오점육 인치", "512GB"→"오백십이 기가", "i5"→"아이파이브") — TTS가 숫자를 잘못
+  읽는 걸 방지하기 위함. 이 세 필드는 화면에 절대 글자로 표시되지 않고 음성으로만
+  재생됨.
+- **주의: narration_script1/2/3을 제외한 모든 필드(spec1~3_title/body, hook_title_line1/2,
   hook_speech, cta_speech, youtube_title, youtube_description_intro, x_post)는 화면에
   글자 그대로 표시되거나 HeyGen 아바타 TTS(숫자를 정상적으로 읽음)가 읽으므로, 숫자를
   절대 한글로 풀어쓰지 말고 원래 숫자+단위 표기를 그대로 쓸 것** (예: "12.1인치", "512GB",
@@ -57,7 +62,8 @@ PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 쇼츠 채널(쿠팡�
 [출력 형식 - JSON만 출력, 다른 텍스트 없이]
 {{"hook_title_line1":"","hook_title_line2":"","hook_speech":"","cta_speech":"",
 "spec1_title":"","spec1_body":"","spec2_title":"","spec2_body":"","spec3_title":"","spec3_body":"",
-"narration_script":"","youtube_title":"","youtube_description_intro":"","x_post":""}}
+"narration_script1":"","narration_script2":"","narration_script3":"",
+"youtube_title":"","youtube_description_intro":"","x_post":""}}
 """
 
 

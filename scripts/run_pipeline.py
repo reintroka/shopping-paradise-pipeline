@@ -89,10 +89,8 @@ def main():
         (script_data["spec1_title"], script_data["spec1_body"]),
         (script_data["spec2_title"], script_data["spec2_body"]),
         (script_data["spec3_title"], script_data["spec3_body"]),
-        script_data["hook_title_line1"],
-        script_data["hook_title_line2"],
-        hook_speech=script_data["hook_speech"],
-        cta_speech=script_data["cta_speech"],
+        script_data["hook_speech"],
+        script_data["cta_speech"],
     )
 
     # 5. HeyGen 생성 (비용 발생 지점)
@@ -105,9 +103,10 @@ def main():
         "--out-dir", str(work_dir),
     ])
 
-    # 5.5. 스펙 설명 나레이션 (Google Cloud TTS)
-    google_tts.synthesize(script_data["narration_script"], args.character, work_dir / "middle_narration.mp3")
-    print("나레이션 오디오 생성 완료 (Google TTS)")
+    # 5.5. 스펙 설명 나레이션 3개 (Google Cloud TTS, 스펙 카드 1개당 1개 — 컷 전환과 정확히 동기화하기 위함)
+    for i in (1, 2, 3):
+        google_tts.synthesize(script_data[f"narration_script{i}"], args.character, work_dir / f"narration{i}.mp3")
+    print("나레이션 오디오 3개 생성 완료 (Google TTS)")
 
     # 6. 최종 조립
     final_video = work_dir / "final.mp4"
@@ -142,7 +141,7 @@ def main():
 
     # 10. 링크 페이지 업데이트 (부가)
     soft_step("링크 페이지 업데이트", lambda: update_link_page.add_card(
-        product["productName"][:20], f"{product['productPrice']:,}원대", coupang_url, script_data["hook_title_line1"] + " " + script_data["hook_title_line2"],
+        product["productName"][:20], f"{product['productPrice']:,}원대", coupang_url, script_data["hook_speech"],
     ))
 
     # 11. 발행 기록 추가 (롱폼 자동 컴파일 판단용)
