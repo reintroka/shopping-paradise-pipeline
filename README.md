@@ -1,8 +1,9 @@
 # shopping-paradise-pipeline
 
 쇼핑의천국 유튜브 채널(쿠팡파트너스 제품추천 숏츠) 완전자동화 파이프라인.
-2026-08-26 세션에서 확정된 "골드 럭셔리" 디자인 시스템(크림 배경+골드 카드+원형 프레임
-제품사진+골드 라벨 타이틀)을 재현. 상세 배경은 project memory `project_shoppingparadise_youtube.md` 참고.
+2026-08-27 로컬 편집 세션에서 확정된 v15 디자인(골드 포일 타이틀+유리질감 카드+
+아이콘+스텝배지+제품 그림자/리플렉션+비네트+크래시줌 컷 전환+세이프존 자막)을
+재현. 상세 배경은 project memory `project_shoppingparadise_youtube.md` 참고.
 
 ## 실행
 
@@ -26,12 +27,15 @@ Text-to-Speech API" 활성화 → 그 API로 제한(restrict)한 API 키 발급.
 ## 구조
 
 - `assets/characters/{female,male}/` — 캐릭터 레퍼런스 이미지 28장씩
-- `assets/fonts/NotoSansKR-Regular.ttf` — 가변폰트(클라우드 Linux엔 맑은고딕 없음)
+- `assets/fonts/NotoSansKR-Regular.ttf` — v1 디자인에서 쓰던 가변폰트(현재 미사용, 참고용 보관)
+- `assets/fonts/NotoSerifKR-VF.ttf` — v15 골드 포일 타이틀/카드/자막에 쓰는 세리프 가변폰트
 - `assets/logo/channel_logo.png` — 쇼핑의천국 실제 로고
 - `assets/sfx/` — pop.mp3(카드 등장), whoosh-short.mp3(컷 전환)
 - `scripts/pick_product.py` — 쿠팡 API로 고가 전자제품 선정, 중복 방지(`used_products.json`)
-- `scripts/gen_script.py` — Gemini로 훅/스펙/CTA 대본 + SEO 메타데이터 생성
-- `scripts/build_graphics.py` — PIL로 골드 럭셔리 디자인 그래픽 생성
+- `scripts/gen_script.py` — Gemini로 훅/스펙/CTA 대본 + SEO 메타데이터 생성.
+  나레이션은 스펙 1개당 문장 1개(`narration_script1/2/3`)로 분리되어 있어서
+  컷 전환이 문장 경계와 정확히 맞음(2026-08-27, 기존엔 1개 통짜를 3등분했었음).
+- `scripts/build_graphics.py` — PIL로 v15 골드 럭셔리 디자인 그래픽 생성 (2026-08-27 로컬 세션에서 확정된 디자인 이식)
 - `scripts/heygen_gen.py` — HeyGen 아바타 훅/CTA 영상 생성
 - `scripts/google_tts.py` — 스펙 설명 나레이션 생성 (Google Cloud TTS, 2026-08-27
   헤이젠 TTS에서 교체 — "AI같이 들린다"는 피드백 때문. 클라우드 샌드박스가 GPU가
