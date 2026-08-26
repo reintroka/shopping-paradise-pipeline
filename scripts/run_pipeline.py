@@ -1,0 +1,149 @@
+"""쇼핑의천국 숏츠 완전자동화 파이프라인 오케스트레이터.
+
+사용법: python run_pipeline.py --character female|male
+
+순서:
+  1. 쿠팡 상품 선정 (pick_product) — 실패하면 중단
+  2. Gemini 대본 생성 (gen_script) — 실패하면 중단
+  3. 상품 이미지 다운로드
+  4. 그래픽 생성 (build_graphics)
+  5. HeyGen 훅/CTA 영상 + 나레이션 오디오 생성 (heygen_gen) — 여기서부터 비용 발생
+  6. ffmpeg 최종 조립 (assemble_video)
+  7. 유튜브 공개 업로드 (upload_youtube) — 실패하면 중단(핵심 산출물)
+  8. X 포스트 (post_x) — 실패해도 계속 진행(부가 기능)
+  9. 유튜브 댓글 홍보 (post_comment, 재시도 포함) — 실패해도 계속 진행
+  10. 부업실험실 링크 페이지 업데이트 (update_link_page) — 실패해도 계속 진행
+  11. used_products.json 변경사항 커밋+푸시 (파이프라인 레포 자체)
+"""
+import argparse
+import json
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO_ROOT = HERE.parent
+
+sys.path.insert(0, str(HERE))
+import build_graphics  # noqa: E402
+import heygen_gen  # noqa: E402
+import assemble_video  # noqa: E402
+import upload_youtube  # noqa: E402
+import post_x  # noqa: E402
+import post_comment  # noqa: E402
+import update_link_page  # noqa: E402
+
+
+def run(cmd, **kw):
+    print("+", " ".join(cmd))
+    return subprocess.run(cmd, check=True, **kw)
+
+
+def soft_step(name, fn):
+    """부가 기능 스텝: 실패해도 파이프라인 전체를 막지 않는다."""
+    try:
+        fn()
+        return True
+    except Exception as e:
+        print(f"[경고] {name} 실패 (파이프라인은 계속 진행): {e}")
+        return False
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--character", choices=["female", "male"], required=True)
+    args = p.parse_args()
+
+    work_dir = REPO_ROOT / "work" / args.character
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. 상품 선정
+    product_path = work_dir / "product.json"
+    run(["python3", str(HERE / "pick_product.py"), "--out", str(product_path)])
+    product = json.loads(product_path.read_text(encoding="utf-8"))
+
+    # 2. 대본 생성
+    script_path = work_dir / "script.json"
+    run(["python3", str(HERE / "gen_script.py"), "--product-json", str(product_path), "--out", str(script_path)])
+    script_data = json.loads(script_path.read_text(encoding="utf-8"))
+
+    # 3. 상품 이미지 다운로드
+    product_image_path = work_dir / "product.jpg"
+    req = urllib.request.Request(product["productImage"])
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        product_image_path.write_bytes(resp.read())
+
+    # 4. 그래픽 생성
+    build_graphics.build_all(
+        work_dir,
+        product["productName"][:20],
+        f"{product['productPrice']:,}원대",
+        product_image_path,
+        (script_data["spec1_title"], script_data["spec1_body"]),
+        (script_data["spec2_title"], script_data["spec2_body"]),
+        (script_data["spec3_title"], script_data["spec3_body"]),
+        script_data["hook_title_line1"],
+        script_data["hook_title_line2"],
+        hook_speech=script_data["hook_speech"],
+        cta_speech=script_data["cta_speech"],
+    )
+
+    # 5. HeyGen 생성 (비용 발생 지점)
+    char_dir = REPO_ROOT / "assets" / "characters" / args.character
+    run([
+        "python3", str(HERE / "heygen_gen.py"),
+        "--character", args.character,
+        "--char-dir", str(char_dir),
+        "--script-json", str(script_path),
+        "--out-dir", str(work_dir),
+    ])
+
+    # 6. 최종 조립
+    final_video = work_dir / "final.mp4"
+    assemble_video.assemble(work_dir, final_video)
+
+    # 7. 유튜브 업로드 (필수)
+    video_id_path = work_dir / "video_id.json"
+    coupang_url = product["productUrl"]
+    run([
+        "python3", str(HERE / "upload_youtube.py"),
+        "--video", str(final_video),
+        "--title", script_data["youtube_title"],
+        "--description", script_data["youtube_description_intro"],
+        "--tags", "쇼핑하울,제품추천,Shorts",
+        "--coupang-url", coupang_url,
+        "--out", str(video_id_path),
+    ])
+    video_info = json.loads(video_id_path.read_text(encoding="utf-8"))
+    video_id = video_info["video_id"]
+
+    # 8. X 포스트 (부가)
+    soft_step("X 포스트", lambda: run(["python3", str(HERE / "post_x.py"), "--text", script_data["x_post"]]))
+
+    # 9. 유튜브 댓글 (부가, 재시도 포함)
+    comment_text = (
+        f"영상에서 소개한 {product['productName'][:20]}, 여기서 바로 확인하세요 \U0001F449 {coupang_url}"
+    )
+    soft_step("유튜브 댓글", lambda: run([
+        "python3", str(HERE / "post_comment.py"),
+        "--video-id", video_id, "--text", comment_text,
+    ]))
+
+    # 10. 링크 페이지 업데이트 (부가)
+    soft_step("링크 페이지 업데이트", lambda: update_link_page.add_card(
+        product["productName"][:20], f"{product['productPrice']:,}원대", coupang_url, script_data["hook_title_line1"] + " " + script_data["hook_title_line2"],
+    ))
+
+    # 11. used_products.json 커밋 (핵심 - 중복 방지를 위해 반드시 반영)
+    run(["git", "-C", str(REPO_ROOT), "add", "used_products.json"])
+    run(["git", "-C", str(REPO_ROOT), "-c", "user.email=bot@shopping-paradise.local",
+         "-c", "user.name=shopping-paradise-bot", "commit", "-m",
+         f"Mark product {product['productId']} as used"])
+    run(["git", "-C", str(REPO_ROOT), "push"])
+
+    print(f"\n✅ 파이프라인 완료: {video_info['url']}")
+
+
+if __name__ == "__main__":
+    main()
