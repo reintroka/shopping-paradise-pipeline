@@ -25,11 +25,15 @@ API_KEY_ENV = "GOOGLE_TTS_API_KEY"
 ENDPOINT = "https://texttospeech.googleapis.com/v1/text:synthesize"
 
 # 캐릭터별 보이스 — 훅/CTA(헤이젠) 성별에 맞춰서만 고른 것이고 완전히 같은
-# 목소리는 아님(위 트레이드오프 참고). Chirp3-HD가 더 자연스러우면 이 값만
-# 바꾸면 됨(다른 코드 수정 불필요).
+# 목소리는 아님(위 트레이드오프 참고).
+# 2026-08-27: Neural2 -> Chirp3-HD로 교체. 비용 차이($16→$30/1M자)가 이 채널
+# 사용량(월 몇만 자 수준, 무료 한도 1M/월 이내)에서는 사실상 0이라 더 자연스러운
+# 쪽으로 변경. 로컬 curl 테스트에서 잘린/깨진 오디오가 나온 적 있었는데, 원인은
+# Chirp3-HD 자체 문제가 아니라 셸에서 한글 텍스트가 깨져서 전송된 것이었음 —
+# 이 파일의 requests 기반 호출(UTF-8 JSON)로는 문제 없음(Whisper로 재검증 완료).
 VOICE_NAMES = {
-    "female": "ko-KR-Neural2-A",
-    "male": "ko-KR-Neural2-C",
+    "female": "ko-KR-Chirp3-HD-Aoede",
+    "male": "ko-KR-Chirp3-HD-Orus",
 }
 
 
