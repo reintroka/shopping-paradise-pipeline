@@ -105,7 +105,7 @@ def main():
 
     # 7. 유튜브 업로드 (필수)
     video_id_path = work_dir / "video_id.json"
-    coupang_url = product["productUrl"]
+    coupang_url = product.get("shortUrl") or product["productUrl"]
     run([
         "python3", str(HERE / "upload_youtube.py"),
         "--video", str(final_video),

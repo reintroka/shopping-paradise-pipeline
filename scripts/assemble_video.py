@@ -38,15 +38,15 @@ def assemble(work_dir: Path, out_path: Path):
 
     filter_middle = f"""
 [0:v]scale=1080:1920[bg];
-[1:v]format=rgba,scale=w='700+t*3':h=-1:eval=frame[prodz];
+[1:v]format=rgba,scale=w='700+t*1':h=-1:eval=frame[prodz];
 [bg][prodz]overlay=x='(1080-w)/2':y=480[bg1];
 [bg1][2:v]overlay=(1080-900)/2:240[bg2];
 [3:v]fade=t=in:st=0:d=0.25:alpha=1,fade=t=out:st={seg_bounds[0][1]-0.25:.2f}:d=0.25:alpha=1[c1];
 [4:v]fade=t=in:st={seg_bounds[1][0]:.2f}:d=0.25:alpha=1,fade=t=out:st={seg_bounds[1][1]-0.25:.2f}:d=0.25:alpha=1[c2];
 [5:v]fade=t=in:st={seg_bounds[2][0]:.2f}:d=0.25:alpha=1,fade=t=out:st={seg_bounds[2][1]-0.25:.2f}:d=0.25:alpha=1[c3];
-[bg2][c1]overlay=104:1400:enable='between(t\\,{seg_bounds[0][0]:.2f}\\,{seg_bounds[0][1]:.2f})'[s1];
-[s1][c2]overlay=104:1400:enable='between(t\\,{seg_bounds[1][0]:.2f}\\,{seg_bounds[1][1]:.2f})'[s2];
-[s2][c3]overlay=104:1400:enable='between(t\\,{seg_bounds[2][0]:.2f}\\,{seg_bounds[2][1]:.2f})'[s3];
+[bg2][c1]overlay=104:1250:enable='between(t\\,{seg_bounds[0][0]:.2f}\\,{seg_bounds[0][1]:.2f})'[s1];
+[s1][c2]overlay=104:1250:enable='between(t\\,{seg_bounds[1][0]:.2f}\\,{seg_bounds[1][1]:.2f})'[s2];
+[s2][c3]overlay=104:1250:enable='between(t\\,{seg_bounds[2][0]:.2f}\\,{seg_bounds[2][1]:.2f})'[s3];
 [s3][6:v]overlay=40:60:shortest=1[vout]
 """.strip()
     filter_path = work_dir / "filter_middle.txt"

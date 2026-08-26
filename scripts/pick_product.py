@@ -54,6 +54,22 @@ def search(keyword, limit=10):
         return json.loads(resp.read())
 
 
+def shorten_link(coupang_url):
+    """쿠팡 딥링크 변환 API로 productUrl(긴 URL)을 link.coupang.com/a/xxxx 짧은 링크로 변환.
+    댓글/설명란에 긴 URL을 그대로 붙이면 지저분하고 스팸처럼 보여서 반드시 축약해야 함.
+    """
+    path = "/v2/providers/affiliate_open_api/apis/openapi/v1/deeplink"
+    auth = sign("POST", path)
+    body = json.dumps({"coupangUrls": [coupang_url]}).encode("utf-8")
+    req = urllib.request.Request(
+        DOMAIN + path, data=body, method="POST",
+        headers={"Authorization": auth, "Content-Type": "application/json;charset=UTF-8"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        result = json.loads(resp.read())
+    return result["data"][0]["shortenUrl"]
+
+
 def load_used():
     if USED_PATH.exists():
         return json.loads(USED_PATH.read_text(encoding="utf-8"))
@@ -90,6 +106,11 @@ def main():
         if candidates:
             chosen = random.choice(candidates)
             chosen["keyword"] = kw
+            try:
+                chosen["shortUrl"] = shorten_link(chosen["productUrl"])
+            except Exception as e:
+                print(f"딥링크 변환 실패, 원본 URL 사용: {e}")
+                chosen["shortUrl"] = chosen["productUrl"]
             Path(args.out).write_text(json.dumps(chosen, ensure_ascii=False, indent=2), encoding="utf-8")
             used.append({
                 "productId": chosen["productId"],
