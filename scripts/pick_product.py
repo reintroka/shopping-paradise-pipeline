@@ -2,6 +2,10 @@
 
 - 여러 키워드로 검색해서 가격 하한(기본 300,000원) 이상인 것만 후보로 삼는다.
 - used_products.json(레포에 커밋됨)에 이미 쓴 productId는 건너뛴다.
+- **로켓배송(isRocket=true)만 후보로 삼는다** — 쿠팡파트너스 검색 API는 후기수/재고
+  필드를 제공하지 않아서(2026-08-26 확인) "후기 많은" 필터는 구현 불가. 대신 로켓배송은
+  쿠팡이 직접 재고를 보유한 상품이라 반짝특가 한정수량보다 재고가 안정적인 경향이 있어
+  이걸로 대체함(사용자 승인, 2026-08-26).
 - 후보를 찾으면 stdout에 JSON 한 줄 출력 + used_products.json에 추가.
 """
 import argparse
@@ -79,7 +83,9 @@ def main():
             continue
         candidates = [
             item for item in result.get("data", {}).get("productData", [])
-            if item["productPrice"] >= MIN_PRICE and item["productId"] not in used_ids
+            if item["productPrice"] >= MIN_PRICE
+            and item["productId"] not in used_ids
+            and item.get("isRocket") is True
         ]
         if candidates:
             chosen = random.choice(candidates)
@@ -95,7 +101,7 @@ def main():
             return
         time.sleep(0.5)
 
-    raise RuntimeError("모든 키워드에서 새 후보를 찾지 못했습니다 (used_products.json 확인 필요)")
+    raise RuntimeError("모든 키워드에서 로켓배송+미사용 신규 후보를 찾지 못했습니다 (used_products.json 확인 필요)")
 
 
 if __name__ == "__main__":
