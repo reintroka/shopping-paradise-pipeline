@@ -1,8 +1,12 @@
-"""HeyGen 아바타 영상(훅+CTA) + TTS 나레이션(스펙 설명 구간) 생성.
+"""HeyGen 아바타 영상(훅+CTA) 생성.
 
 캐릭터별 목소리(2026-08-26 세션에서 확정, 재탐색 불필요):
   female(지은): Gentle Gemma - 37311b8fa31d4b0591d7f1ca012e2c59
   male(민준):  Korean Fin-Analyst - x9yUsHEv2yOPCBKlOk10
+
+스펙 설명 구간 나레이션은 더 이상 여기서 만들지 않음 — "AI같이 들린다"는 피드백으로
+2026-08-27부터 google_tts.py(Google Cloud TTS)로 교체됨. run_pipeline.py가 이 스크립트
+다음에 google_tts.py를 별도로 호출한다.
 """
 import argparse
 import json
@@ -96,18 +100,6 @@ def download(url: str, out_path: Path):
         out_path.write_bytes(resp.read())
 
 
-def tts_speech(text: str, voice_id: str, out_path: Path) -> dict:
-    result = _post_json(
-        "https://api.heygen.com/v3/voices/speech",
-        {"text": text, "voice_id": voice_id, "locale": "ko-KR"},
-    )
-    audio_url = result["data"]["audio_url"]
-    download(audio_url, out_path)
-    meta_path = out_path.with_suffix(".json")
-    meta_path.write_text(json.dumps(result["data"], ensure_ascii=False, indent=2), encoding="utf-8")
-    return result["data"]
-
-
 def pick_char_image(char_dir: Path, prefer_keywords, avoid_path=None):
     files = list(char_dir.glob("*.jpeg"))
     preferred = [f for f in files if any(k in f.name.lower() for k in prefer_keywords) and f != avoid_path]
@@ -146,9 +138,6 @@ def main():
     cta_url = poll_video(cta_vid_id)
     download(cta_url, out_dir / "cta.mp4")
     print("CTA 영상 다운로드 완료")
-
-    tts_speech(script_data["narration_script"], voice_id, out_dir / "middle_narration.mp3")
-    print("나레이션 오디오 생성 완료")
 
 
 if __name__ == "__main__":

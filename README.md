@@ -17,7 +17,11 @@ python3 scripts/run_pipeline.py --character male    # 민준 (저녁 7시)
 
 `HEYGEN_API_KEY`, `COUPANG_ACCESS_KEY`, `COUPANG_SECRET_KEY`, `GEMINI_API_KEY`,
 `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN`,
-`X_CONSUMER_KEY`, `X_CONSUMER_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_SECRET`
+`X_CONSUMER_KEY`, `X_CONSUMER_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_SECRET`,
+`GOOGLE_TTS_API_KEY` **(2026-08-27 추가 — 아직 등록 안 됐으면 아래대로 발급해서
+"shopping-paradise-automation" 환경 시크릿에 추가해야 나레이션 생성이 성공함)**:
+Google Cloud Console에서 프로젝트 생성(또는 기존 프로젝트 사용) → "Cloud
+Text-to-Speech API" 활성화 → 그 API로 제한(restrict)한 API 키 발급.
 
 ## 구조
 
@@ -28,7 +32,12 @@ python3 scripts/run_pipeline.py --character male    # 민준 (저녁 7시)
 - `scripts/pick_product.py` — 쿠팡 API로 고가 전자제품 선정, 중복 방지(`used_products.json`)
 - `scripts/gen_script.py` — Gemini로 훅/스펙/CTA 대본 + SEO 메타데이터 생성
 - `scripts/build_graphics.py` — PIL로 골드 럭셔리 디자인 그래픽 생성
-- `scripts/heygen_gen.py` — HeyGen 아바타 훅/CTA 영상 + 나레이션 TTS
+- `scripts/heygen_gen.py` — HeyGen 아바타 훅/CTA 영상 생성
+- `scripts/google_tts.py` — 스펙 설명 나레이션 생성 (Google Cloud TTS, 2026-08-27
+  헤이젠 TTS에서 교체 — "AI같이 들린다"는 피드백 때문. 클라우드 샌드박스가 GPU가
+  없어서 로컬 CosyVoice(zero-shot 보이스클로닝)를 그대로 옮길 수 없었던 게 이유.
+  **트레이드오프**: 훅/CTA는 여전히 헤이젠 목소리라 나레이션과 완전히 같은 목소리는
+  아님 — Google TTS는 사전정의된 보이스 선택이라 클로닝이 안 됨.
 - `scripts/assemble_video.py` — ffmpeg 최종 조립
 - `scripts/upload_youtube.py` — 공개 업로드 (채널 ID 검증 포함)
 - `scripts/post_x.py` — X 포스트 (링크 없이, 프로필 바이오 링크 유도)

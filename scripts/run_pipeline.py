@@ -7,7 +7,8 @@
   2. Gemini 대본 생성 (gen_script) — 실패하면 중단
   3. 상품 이미지 다운로드
   4. 그래픽 생성 (build_graphics)
-  5. HeyGen 훅/CTA 영상 + 나레이션 오디오 생성 (heygen_gen) — 여기서부터 비용 발생
+  5. HeyGen 훅/CTA 영상 생성 (heygen_gen) — 여기서부터 비용 발생
+  5.5. 스펙 설명 나레이션 생성 (google_tts, Google Cloud TTS — 2026-08-27 헤이젠에서 교체)
   6. ffmpeg 최종 조립 (assemble_video)
   7. 유튜브 공개 업로드 (upload_youtube) — 실패하면 중단(핵심 산출물)
   8. X 포스트 (post_x) — 실패해도 계속 진행(부가 기능)
@@ -30,6 +31,7 @@ REPO_ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 import build_graphics  # noqa: E402
 import heygen_gen  # noqa: E402
+import google_tts  # noqa: E402
 import assemble_video  # noqa: E402
 import upload_youtube  # noqa: E402
 import post_x  # noqa: E402
@@ -102,6 +104,10 @@ def main():
         "--script-json", str(script_path),
         "--out-dir", str(work_dir),
     ])
+
+    # 5.5. 스펙 설명 나레이션 (Google Cloud TTS)
+    google_tts.synthesize(script_data["narration_script"], args.character, work_dir / "middle_narration.mp3")
+    print("나레이션 오디오 생성 완료 (Google TTS)")
 
     # 6. 최종 조립
     final_video = work_dir / "final.mp4"
