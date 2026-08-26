@@ -34,6 +34,9 @@ python3 scripts/run_pipeline.py --character male    # 민준 (저녁 7시)
 - `scripts/post_x.py` — X 포스트 (링크 없이, 프로필 바이오 링크 유도)
 - `scripts/post_comment.py` — 영상 공개 확인 후 댓글 홍보 (재시도 포함)
 - `scripts/update_link_page.py` — 부업실험실 링크 페이지에 상품 카드 추가
+- `scripts/shorts_log.py` — 발행 이력 기록(`shorts_log.json`), 롱폼 컴파일 판단용
+- `scripts/compile_longform.py` — 숏츠 6개(하루 2개 x 3일)가 쌓이면 유튜브에서
+  yt-dlp로 다시 받아 이어붙여 롱폼으로 별도 업로드 (2026-08-27 추가)
 - `scripts/run_pipeline.py` — 전체 오케스트레이터
 
 ## 알아둘 것
@@ -43,3 +46,6 @@ python3 scripts/run_pipeline.py --character male    # 민준 (저녁 7시)
   상품 선정/대본생성/HeyGen/조립/유튜브업로드는 실패시 전체 중단.
 - [[feedback-heygen-no-regenerate-without-confirm]] 원칙은 이 자동화에는 적용 안 됨
   (매번 새 상품 → 매번 새 생성이 정상, "재생성 낭비 금지"는 같은 영상 반복수정 얘기였음).
+- 롱폼 컴파일은 로컬에 숏츠 mp4를 안 남겨두는 클라우드 실행 특성상 유튜브에
+  이미 올라간 영상을 yt-dlp로 재다운로드해서 이어붙이는 방식이다. 하드컷으로만
+  연결하는 1차 버전이라, 상품별 타이틀 카드나 전환 효과음을 넣는 건 다음 개선 여지.

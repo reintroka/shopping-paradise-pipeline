@@ -13,7 +13,9 @@
   8. X 포스트 (post_x) — 실패해도 계속 진행(부가 기능)
   9. 유튜브 댓글 홍보 (post_comment, 재시도 포함) — 실패해도 계속 진행
   10. 부업실험실 링크 페이지 업데이트 (update_link_page) — 실패해도 계속 진행
-  11. used_products.json 변경사항 커밋+푸시 (파이프라인 레포 자체)
+  11. shorts_log.json에 이번 발행 기록 추가
+  12. 숏츠가 6개(3일치) 쌓였으면 롱폼으로 이어붙여 별도 업로드 (compile_longform) — 실패해도 계속 진행
+  13. used_products.json + shorts_log.json(+longform_counter.json) 변경사항 커밋+푸시 (파이프라인 레포 자체)
 """
 import argparse
 import json
@@ -33,6 +35,8 @@ import upload_youtube  # noqa: E402
 import post_x  # noqa: E402
 import post_comment  # noqa: E402
 import update_link_page  # noqa: E402
+import shorts_log  # noqa: E402
+import compile_longform  # noqa: E402
 
 
 def run(cmd, **kw):
@@ -135,11 +139,27 @@ def main():
         product["productName"][:20], f"{product['productPrice']:,}원대", coupang_url, script_data["hook_title_line1"] + " " + script_data["hook_title_line2"],
     ))
 
-    # 11. used_products.json 커밋 (핵심 - 중복 방지를 위해 반드시 반영)
-    run(["git", "-C", str(REPO_ROOT), "add", "used_products.json"])
+    # 11. 발행 기록 추가 (롱폼 자동 컴파일 판단용)
+    shorts_log.append_entry(
+        args.character, product["productName"][:20], product["productPrice"],
+        video_id, video_info["url"], coupang_url,
+    )
+
+    # 12. 3일치(6개) 쌓였으면 롱폼 자동 제작+업로드 (부가 — 실패해도 숏츠 발행 자체는 이미 끝난 상태)
+    soft_step("롱폼 자동 컴파일", compile_longform.check_and_compile)
+
+    # 13. used_products.json + shorts_log.json(+longform_counter.json, 있으면) 커밋
+    # (핵심 - 중복 방지를 위해 반드시 반영). longform_counter.json은 첫 롱폼이
+    # 만들어지기 전까지는 존재하지 않으므로, 존재하는 파일만 add해야
+    # "pathspec did not match" 에러로 이 필수 스텝 전체가 죽는 걸 피할 수 있다.
+    trackable = [
+        f for f in ("used_products.json", "shorts_log.json", "longform_counter.json")
+        if (REPO_ROOT / f).exists()
+    ]
+    run(["git", "-C", str(REPO_ROOT), "add", *trackable])
     run(["git", "-C", str(REPO_ROOT), "-c", "user.email=bot@shopping-paradise.local",
          "-c", "user.name=shopping-paradise-bot", "commit", "-m",
-         f"Mark product {product['productId']} as used"])
+         f"Mark product {product['productId']} as used, log short {video_id}"])
     run(["git", "-C", str(REPO_ROOT), "push"])
 
     print(f"\n✅ 파이프라인 완료: {video_info['url']}")
