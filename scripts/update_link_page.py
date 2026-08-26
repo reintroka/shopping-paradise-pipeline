@@ -38,10 +38,18 @@ def add_card(product_name: str, price: str, coupang_url: str, hook_line: str):
       </a>
 
 """
-        marker = '<div class="list">\n'
-        if marker not in html:
-            raise RuntimeError("index.html에서 삽입 위치(<div class=\"list\">)를 찾지 못했습니다.")
-        html = html.replace(marker, marker + new_card, 1)
+        # 자소서 프롬프트팩(핵심 상품)은 항상 목록 맨 위에 고정돼야 함(class="card pinned").
+        # 새 카드를 그냥 <div class="list"> 바로 다음에 꽂으면 고정 카드보다 위로 밀려나므로,
+        # 고정 카드가 있으면 그 블록 바로 다음에, 없으면 리스트 맨 위에 삽입한다.
+        pinned_match = re.search(r'( {6}<a class="card pinned".*?</a>\n\n)', html, re.S)
+        if pinned_match:
+            insert_after = pinned_match.group(1)
+            html = html.replace(insert_after, insert_after + new_card, 1)
+        else:
+            marker = '<div class="list">\n'
+            if marker not in html:
+                raise RuntimeError("index.html에서 삽입 위치(<div class=\"list\">)를 찾지 못했습니다.")
+            html = html.replace(marker, marker + new_card, 1)
         index_path.write_text(html, encoding="utf-8")
 
         run(["git", "-C", tmp, "add", "index.html"])
