@@ -74,7 +74,7 @@ def assemble(work_dir: Path, out_path: Path):
         f"[7:a][p0d][p1d][p2d]amix=inputs=4:duration=first:dropout_transition=0[aout]",
         "-map", "[vout]", "-map", "[aout]",
         "-t", str(narration_dur),
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-crf", "18",
         str(middle_mp4),
     ])
 
