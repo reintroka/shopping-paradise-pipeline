@@ -37,6 +37,12 @@ CAPTION_Y = 1506
 CTA_CAPTION_Y = 1030
 CTA_BUTTON_Y = 1140
 
+# 2026-08-27: 헤이젠 훅/CTA 오디오는 그대로(raw) 붙여왔는데, 나레이션(google_tts.py)에는
+# loudnorm을 적용해서 세 구간(훅/설명/CTA) 볼륨이 서로 다르게 들리는 문제가 있었음.
+# 나레이션 쪽과 동일한 타깃으로 훅/CTA 오디오도 정규화해서 구간 전환 시 볼륨이 안 튀게 함.
+# google_tts.py의 LOUDNORM_TARGET과 반드시 같은 값으로 유지할 것.
+LOUDNORM_TARGET = "loudnorm=I=-14:TP=-1:LRA=11"
+
 LEAD_IN = 0.3
 BEAT_GAP = 0.4
 FLASH_DUR = 0.06
@@ -224,7 +230,8 @@ def build_hook_segment(work_dir: Path) -> Path:
         f"[base][1:v]overlay={LOGO_XY[0]}:{LOGO_XY[1]}:shortest=1[u1];\n"
         f"[u1][2:v]overlay={AI_TAG_XY[0]}:{AI_TAG_XY[1]}:shortest=1[u2];\n"
         f"[u2][3:v]overlay={TITLE_XY[0]}:{TITLE_XY[1]}:shortest=1[u3];\n"
-        f"[u3][4:v]overlay={CAPTION_X}:{CAPTION_Y}:shortest=1[vout]\n"
+        f"[u3][4:v]overlay={CAPTION_X}:{CAPTION_Y}:shortest=1[vout];\n"
+        f"[0:a]{LOUDNORM_TARGET}[aout]\n"
     )
     filter_path = work_dir / "filter_hook.txt"
     filter_path.write_text(filter_txt, encoding="utf-8")
@@ -236,7 +243,7 @@ def build_hook_segment(work_dir: Path) -> Path:
            "-loop", "1", "-i", str(work_dir / "title_block.png"),
            "-loop", "1", "-i", str(work_dir / "caption_hook.png"),
            "-filter_complex_script", str(filter_path),
-           "-map", "[vout]", "-map", "0:a",
+           "-map", "[vout]", "-map", "[aout]",
            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(out_path)]
     run(cmd)
     return out_path
@@ -250,7 +257,8 @@ def build_cta_segment(work_dir: Path) -> Path:
         f"[u2][3:v]overlay={CAPTION_X}:{CTA_CAPTION_Y}:shortest=1[u3];\n"
         "[4:v]scale=w='560*(1+0.045*sin(2*3.14159265*t/1.1))':"
         "h='108*(1+0.045*sin(2*3.14159265*t/1.1))':eval=frame[btn];\n"
-        f"[u3][btn]overlay=x='(1080-w)/2':y={CTA_BUTTON_Y}:eval=frame:shortest=1[vout]\n"
+        f"[u3][btn]overlay=x='(1080-w)/2':y={CTA_BUTTON_Y}:eval=frame:shortest=1[vout];\n"
+        f"[0:a]{LOUDNORM_TARGET}[aout]\n"
     )
     filter_path = work_dir / "filter_cta.txt"
     filter_path.write_text(filter_txt, encoding="utf-8")
@@ -262,7 +270,7 @@ def build_cta_segment(work_dir: Path) -> Path:
            "-loop", "1", "-i", str(work_dir / "caption_cta.png"),
            "-loop", "1", "-i", str(work_dir / "cta_button.png"),
            "-filter_complex_script", str(filter_path),
-           "-map", "[vout]", "-map", "0:a",
+           "-map", "[vout]", "-map", "[aout]",
            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(out_path)]
     run(cmd)
     return out_path

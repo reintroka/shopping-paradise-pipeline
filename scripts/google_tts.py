@@ -49,8 +49,10 @@ def _ffprobe_duration(path: Path) -> float:
 # mean_volume 측정: Neural2-A -18.7dB, Chirp3-HD-Aoede -22.0dB, Chirp3-HD-Orus
 # -19.6dB) — assemble_video.py의 amix가 normalize=0(SFX 대비 상대 볼륨을 의도적으로
 # 고정)라서 이 차이가 그대로 최종 영상 나레이션 볼륨 저하로 이어짐. loudnorm으로
-# -16 LUFS에 맞춰 보이스/엔진이 바뀌어도 항상 일정한 나레이션 볼륨을 보장.
-LOUDNORM_TARGET = "loudnorm=I=-16:TP=-1.5:LRA=11"
+# 일정한 나레이션 볼륨을 보장. 처음 -16 LUFS로 뒀다가 "조금 더 올려" 피드백으로
+# -14로 상향. assemble_video.py의 LOUDNORM_TARGET(훅/CTA 오디오용)과 반드시
+# 같은 값으로 유지할 것 — 세 구간(훅/설명/CTA) 볼륨을 통일하는 게 목적.
+LOUDNORM_TARGET = "loudnorm=I=-14:TP=-1:LRA=11"
 
 
 def synthesize(text: str, character: str, out_path: Path) -> dict:
