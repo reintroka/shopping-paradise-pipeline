@@ -54,10 +54,27 @@ def search(keyword, limit=10):
         return json.loads(resp.read())
 
 
-def shorten_link(coupang_url):
-    """쿠팡 딥링크 변환 API로 productUrl(긴 URL)을 link.coupang.com/a/xxxx 짧은 링크로 변환.
+def bare_product_url(product_id, item_url):
+    """productUrl(이미 lptag/traceid 등이 붙은 link.coupang.com 추적 링크)에서
+    itemId/vendorItemId만 뽑아 순수 상품 URL(www.coupang.com/vp/products/...)을 재구성.
+    딥링크 변환 API는 이미 추적 파라미터가 붙은 link.coupang.com URL을 넣으면
+    "url convert failed"로 거부하므로, 반드시 순수 URL 형태로 다시 만들어야 함.
+    """
+    q = urllib.parse.urlparse(item_url).query
+    params = urllib.parse.parse_qs(q)
+    item_id = params.get("itemId", [None])[0]
+    vendor_item_id = params.get("vendorItemId", [None])[0]
+    url = f"https://www.coupang.com/vp/products/{product_id}"
+    if item_id and vendor_item_id:
+        url += f"?itemId={item_id}&vendorItemId={vendor_item_id}"
+    return url
+
+
+def shorten_link(product_id, item_url):
+    """쿠팡 딥링크 변환 API로 순수 상품 URL을 link.coupang.com/a/xxxx 짧은 링크로 변환.
     댓글/설명란에 긴 URL을 그대로 붙이면 지저분하고 스팸처럼 보여서 반드시 축약해야 함.
     """
+    coupang_url = bare_product_url(product_id, item_url)
     path = "/v2/providers/affiliate_open_api/apis/openapi/v1/deeplink"
     auth = sign("POST", path)
     body = json.dumps({"coupangUrls": [coupang_url]}).encode("utf-8")
@@ -107,7 +124,7 @@ def main():
             chosen = random.choice(candidates)
             chosen["keyword"] = kw
             try:
-                chosen["shortUrl"] = shorten_link(chosen["productUrl"])
+                chosen["shortUrl"] = shorten_link(chosen["productId"], chosen["productUrl"])
             except Exception as e:
                 print(f"딥링크 변환 실패, 원본 URL 사용: {e}")
                 chosen["shortUrl"] = chosen["productUrl"]
