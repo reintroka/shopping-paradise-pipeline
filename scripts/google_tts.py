@@ -45,6 +45,14 @@ def _ffprobe_duration(path: Path) -> float:
     return float(out.stdout.strip())
 
 
+# 2026-08-27: Chirp3-HD 보이스가 Neural2보다 평균 3~4dB 조용하게 나옴(둘 다 raw
+# mean_volume 측정: Neural2-A -18.7dB, Chirp3-HD-Aoede -22.0dB, Chirp3-HD-Orus
+# -19.6dB) — assemble_video.py의 amix가 normalize=0(SFX 대비 상대 볼륨을 의도적으로
+# 고정)라서 이 차이가 그대로 최종 영상 나레이션 볼륨 저하로 이어짐. loudnorm으로
+# -16 LUFS에 맞춰 보이스/엔진이 바뀌어도 항상 일정한 나레이션 볼륨을 보장.
+LOUDNORM_TARGET = "loudnorm=I=-16:TP=-1.5:LRA=11"
+
+
 def synthesize(text: str, character: str, out_path: Path) -> dict:
     api_key = os.environ[API_KEY_ENV]
     voice_name = VOICE_NAMES[character]
@@ -63,7 +71,13 @@ def synthesize(text: str, character: str, out_path: Path) -> dict:
         result = json.loads(resp.read())
 
     audio_bytes = base64.b64decode(result["audioContent"])
-    out_path.write_bytes(audio_bytes)
+    raw_path = out_path.with_suffix(".raw.mp3")
+    raw_path.write_bytes(audio_bytes)
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-i", str(raw_path), "-af", LOUDNORM_TARGET, "-ar", "44100", str(out_path)],
+        check=True,
+    )
+    raw_path.unlink()
 
     duration = _ffprobe_duration(out_path)
     meta = {"duration": duration, "voice_name": voice_name, "engine": "google-tts"}
