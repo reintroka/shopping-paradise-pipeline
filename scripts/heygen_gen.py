@@ -125,8 +125,13 @@ def pick_char_image(char_dir: Path, character: str, role: str, avoid_path=None) 
     없이 전체 폴더를 대상으로, 한 사이클(전체 장수) 다 쓰기 전엔 같은 사진이 다시
     나오지 않도록 사용 이력을 `character_image_history.json`에 기록. 다 쓰면 이력을
     비우고 새 사이클 시작.
+
+    단, 파일명에 "laptop"이 들어간 사진(노트북을 가리키거나 타이핑하는 포즈)은 후보에서
+    아예 제외 — 이건 LG그램15(노트북) 리뷰용으로 만든 사진이라 그 상품일 때만 맞고,
+    상품은 매번 랜덤으로 바뀌는데(공기청정기, 로봇청소기 등) 노트북을 가리키는 모습이
+    나오면 상품과 안 맞아서 어색해 보인다는 피드백으로 제외함.
     """
-    files = sorted(char_dir.glob("*.jpeg"))
+    files = sorted(f for f in char_dir.glob("*.jpeg") if "laptop" not in f.name.lower())
     history = _load_char_history()
     key = f"{character}_{role}"
     used = set(history.get(key, []))
