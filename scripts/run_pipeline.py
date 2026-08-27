@@ -52,10 +52,14 @@ soft_step_results = []
 
 
 def soft_step(name, fn):
-    """부가 기능 스텝: 실패해도 파이프라인 전체를 막지 않는다. 텔레그램 요약용으로 결과 기록."""
+    """부가 기능 스텝: 실패해도 파이프라인 전체를 막지 않는다.
+
+    fn()이 문자열을 반환하면 텔레그램 요약에 "성공" 대신 그 문자열을 그대로 쓴다
+    (예: 롱폼 컴파일처럼 "성공"만으로는 실제 무슨 일이 있었는지 알 수 없는 단계용).
+    """
     try:
-        fn()
-        soft_step_results.append((name, True, None))
+        note = fn()
+        soft_step_results.append((name, True, note if isinstance(note, str) else None))
         return True
     except Exception as e:
         print(f"[경고] {name} 실패 (파이프라인은 계속 진행): {e}")
@@ -166,7 +170,14 @@ def main():
     )
 
     # 12. 3일치(6개) 쌓였으면 롱폼 자동 제작+업로드 (부가 — 실패해도 숏츠 발행 자체는 이미 끝난 상태)
-    soft_step("롱폼 자동 컴파일", compile_longform.check_and_compile)
+    def _compile_longform_step():
+        pending_before = len([e for e in shorts_log.load_log() if not e.get("compiled_in")])
+        result = compile_longform.check_and_compile()
+        if result:
+            return f"롱폼 완성! {result['url']}"
+        return f"대기 중 ({pending_before}/6)"
+
+    soft_step("롱폼 자동 컴파일", _compile_longform_step)
 
     # 13. used_products.json + shorts_log.json(+longform_counter.json, 있으면) 커밋
     # (핵심 - 중복 방지를 위해 반드시 반영). longform_counter.json은 첫 롱폼이
@@ -190,8 +201,13 @@ def main():
         f"상품: {product['productName'][:20]} ({product['productPrice']:,}원대)",
         f"영상: {video_info['url']}",
     ]
-    for name, ok, err in soft_step_results:
-        lines.append(f"- {name}: {'성공' if ok else f'실패 ({err})'}")
+    for name, ok, note in soft_step_results:
+        if not ok:
+            lines.append(f"- {name}: 실패 ({note})")
+        elif note:
+            lines.append(f"- {name}: {note}")
+        else:
+            lines.append(f"- {name}: 성공")
     notify("\n".join(lines))
 
 
