@@ -11,7 +11,7 @@
   5.5. 스펙 설명 나레이션 생성 (google_tts, Google Cloud TTS — 2026-08-27 헤이젠에서 교체)
   6. ffmpeg 최종 조립 (assemble_video)
   7. 유튜브 공개 업로드 (upload_youtube) — 실패하면 중단(핵심 산출물)
-  8. X 포스트 (post_x) — 실패해도 계속 진행(부가 기능)
+  8. X 포스트 (post_x, 상품 이미지 첨부 + 403 시 문구 변형 1회 재시도) — 실패해도 계속 진행(부가 기능)
   9. 유튜브 댓글 홍보 (post_comment, 재시도 포함) — 실패해도 계속 진행
   10. 부업실험실 링크 페이지 업데이트 (update_link_page) — 실패해도 계속 진행
   11. shorts_log.json에 이번 발행 기록 추가
@@ -146,8 +146,11 @@ def main():
     video_info = json.loads(video_id_path.read_text(encoding="utf-8"))
     video_id = video_info["video_id"]
 
-    # 8. X 포스트 (부가)
-    soft_step("X 포스트", lambda: run(["python3", str(HERE / "post_x.py"), "--text", script_data["x_post"]]))
+    # 8. X 포스트 (부가) — 2026-08-27: 쿠팡 상품 이미지 첨부 추가
+    soft_step("X 포스트", lambda: run([
+        "python3", str(HERE / "post_x.py"),
+        "--text", script_data["x_post"], "--image", str(product_image_path),
+    ]))
 
     # 9. 유튜브 댓글 (부가, 재시도 포함)
     comment_text = (
