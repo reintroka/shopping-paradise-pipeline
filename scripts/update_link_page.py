@@ -17,11 +17,14 @@ def run(cmd, cwd=None):
 
 
 def next_ordinal_label(html: str) -> str:
+    """2026-08-27: 예전엔 "첫/두/세.../열 번째"처럼 순우리말 수사를 하드코딩된 목록
+    (10개까지)에서 골라 썼는데, 10개를 넘으면 계속 "열 번째"만 반복되는 버그가 있었고
+    (사용자가 "숫자가 커지면 어쩔라고 그래" 지적으로 발견), 애초에 순우리말 수사는
+    숫자가 커질수록(예: "백서른두 번째") 아라비아 숫자보다 훨씬 길어져서 카드 태그
+    공간에 안 맞을 위험도 있었음. 숫자+번째로 교체 — 몇 개가 쌓여도 짧고 스케일됨."""
     labels = re.findall(r'class="tag num">([^<]+) 실험', html)
-    korean_numbers = ["첫", "두", "세", "네", "다섯", "여섯", "일곱", "여덟", "아홉", "열"]
-    count = len(labels) + 1  # + 1 (pinned item은 "첫 실험"으로 이미 세어짐 별도 처리 없이 근사)
-    idx = min(count, len(korean_numbers) - 1)
-    return f"{korean_numbers[idx]} 번째"
+    count = len(labels) + 1  # + 1 (pinned item은 "1번째 실험"으로 이미 세어짐 별도 처리 없이 근사)
+    return f"{count}번째"
 
 
 def add_card(product_name: str, price: str, coupang_url: str, hook_line: str):
