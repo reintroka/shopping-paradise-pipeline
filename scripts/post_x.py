@@ -2,12 +2,18 @@
 
 환경변수: X_CONSUMER_KEY, X_CONSUMER_SECRET, X_ACCESS_TOKEN, X_ACCESS_SECRET
 
-2026-08-27: 두 가지 추가
+2026-08-27: 세 가지 추가/수정
   1. --image로 상품 이미지(쿠팡에서 받은 product.jpg)를 첨부 — 트윗이 더 눈에 띄고,
      텍스트만 겹칠 때보다 X의 중복 콘텐츠 판정을 피하는 데도 도움됨.
   2. 403(주로 "중복 콘텐츠" 거부로 추정 — 토큰 자체는 정상 확인됨, project memory
      `project_shoppingparadise_youtube.md` 2026-08-27 항목 참고) 발생 시, 문구 끝에
      짧은 변주를 붙여서 1회 재시도.
+  3. 이미지 업로드를 v1.1 구버전 단일 멀티파트(upload.twitter.com/1.1/media/upload.json)
+     에서 v2 청크 업로드(api.x.com/2/media/upload, INIT→APPEND→FINALIZE[→STATUS])로
+     교체 — 실제 파이프라인 실행(하루 2회)에서 이미지 첨부 시 반복적으로 403이 났는데,
+     같은 X 계정 구조로 영상을 첨부하는 다른 프로젝트(코어디랩 명리마스터)는 v2를
+     써서 안정적으로 성공하고 있어 동일한 방식으로 맞췄다. v1.1은 X가 계속 정리/제한
+     중인 구버전 엔드포인트라 신규 앱에서 더 까다롭게 걸렸을 가능성이 높음.
 """
 import argparse
 import hashlib
@@ -49,21 +55,43 @@ def build_auth_header(method, url, extra_params, token, token_secret):
     return header
 
 
-def upload_media(image_path: str) -> str:
-    """멀티파트 업로드라 OAuth 서명에 body 파라미터를 포함할 필요 없음(단순 폼 인코딩과 차이점)."""
-    url = "https://upload.twitter.com/1.1/media/upload.json"
+MEDIA_UPLOAD_URL = "https://api.x.com/2/media/upload"
+MEDIA_CHUNK_SIZE = 4 * 1024 * 1024  # X의 5MB 청크 제한보다 여유있게
+
+
+def _init_media_upload(total_bytes: int, media_type: str, media_category: str) -> str:
+    url = f"{MEDIA_UPLOAD_URL}/initialize"
     token = os.environ["X_ACCESS_TOKEN"]
     token_secret = os.environ["X_ACCESS_SECRET"]
     auth = build_auth_header("POST", url, {}, token, token_secret)
+    body = json.dumps(
+        {"media_type": media_type, "media_category": media_category, "total_bytes": total_bytes}
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=body, headers={"Authorization": auth, "Content-Type": "application/json"}, method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read())
+    return data["data"]["id"]
+
+
+def _append_media_chunk(media_id: str, chunk: bytes, segment_index: int) -> None:
+    url = f"{MEDIA_UPLOAD_URL}/{media_id}/append"
+    token = os.environ["X_ACCESS_TOKEN"]
+    token_secret = os.environ["X_ACCESS_SECRET"]
+    # multipart/form-data 바디는 OAuth 1.0a 서명 베이스에서 제외되므로(JSON 바디와 동일)
+    # oauth_* 파라미터만 서명한다.
+    auth = build_auth_header("POST", url, {}, token, token_secret)
 
     boundary = "----xmediaboundary"
-    with open(image_path, "rb") as f:
-        img_bytes = f.read()
     body = (
         f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="media"; filename="{Path(image_path).name}"\r\n'
-        f"Content-Type: image/jpeg\r\n\r\n"
-    ).encode("utf-8") + img_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
+        f'Content-Disposition: form-data; name="segment_index"\r\n\r\n'
+        f"{segment_index}\r\n"
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="media"; filename="chunk"\r\n'
+        f"Content-Type: application/octet-stream\r\n\r\n"
+    ).encode("utf-8") + chunk + f"\r\n--{boundary}--\r\n".encode("utf-8")
     req = urllib.request.Request(
         url,
         data=body,
@@ -71,8 +99,54 @@ def upload_media(image_path: str) -> str:
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
-        result = json.loads(resp.read())
-    return result["media_id_string"]
+        resp.read()
+
+
+def _finalize_media_upload(media_id: str) -> dict | None:
+    url = f"{MEDIA_UPLOAD_URL}/{media_id}/finalize"
+    token = os.environ["X_ACCESS_TOKEN"]
+    token_secret = os.environ["X_ACCESS_SECRET"]
+    auth = build_auth_header("POST", url, {}, token, token_secret)
+    req = urllib.request.Request(url, data=b"", headers={"Authorization": auth}, method="POST")
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read())
+    return data.get("data", {}).get("processing_info")
+
+
+def _wait_for_media_processing(media_id: str, initial_check_after_secs) -> None:
+    check_after = initial_check_after_secs or 1
+    token = os.environ["X_ACCESS_TOKEN"]
+    token_secret = os.environ["X_ACCESS_SECRET"]
+    for _ in range(30):
+        time.sleep(check_after)
+        extra = {"media_id": media_id, "command": "STATUS"}
+        auth = build_auth_header("GET", MEDIA_UPLOAD_URL, extra, token, token_secret)
+        query_url = f"{MEDIA_UPLOAD_URL}?media_id={pct(media_id)}&command=STATUS"
+        req = urllib.request.Request(query_url, headers={"Authorization": auth}, method="GET")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+        info = data.get("data", {}).get("processing_info")
+        if not info or info.get("state") == "succeeded":
+            return
+        if info.get("state") == "failed":
+            raise RuntimeError("X 미디어 처리 실패 (state=failed)")
+        check_after = info.get("check_after_secs", 3)
+    raise RuntimeError("X 미디어 처리 시간 초과 (timeout)")
+
+
+def upload_media(image_path: str) -> str:
+    """X API v2 청크 업로드(INIT→APPEND→FINALIZE[→STATUS])."""
+    with open(image_path, "rb") as f:
+        img_bytes = f.read()
+    media_type = "image/png" if Path(image_path).suffix.lower() == ".png" else "image/jpeg"
+
+    media_id = _init_media_upload(len(img_bytes), media_type, "tweet_image")
+    for i in range(0, len(img_bytes), MEDIA_CHUNK_SIZE):
+        _append_media_chunk(media_id, img_bytes[i : i + MEDIA_CHUNK_SIZE], i // MEDIA_CHUNK_SIZE)
+    processing_info = _finalize_media_upload(media_id)
+    if processing_info:
+        _wait_for_media_processing(media_id, processing_info.get("check_after_secs"))
+    return media_id
 
 
 def post_tweet(text: str, media_id: str = None) -> dict:
