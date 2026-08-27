@@ -426,7 +426,8 @@ def build_all(out_dir: Path, product_name: str, price: str, product_image_path: 
     for i, (label, value) in enumerate((spec1, spec2, spec3), start=1):
         build_glass_card(out_dir, i, label, value)
         build_step_badge(out_dir, i)
-        build_caption(out_dir, f"beat{i}", value)
+    # 2026-08-27: 설명구간 자막(caption_beat) 제거 — 카드에 이미 같은 문구가 적혀있어 중복이고,
+    # 자막 위치가 유튜브 쇼츠 렌즈 배너와 겹치는 문제도 있었음(assemble_video.py 참고).
     build_caption(out_dir, "hook", hook_speech)
     build_caption(out_dir, "cta", cta_speech)
     build_cta_button(out_dir, cta_text)

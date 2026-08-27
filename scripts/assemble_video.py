@@ -28,12 +28,10 @@ BADGE_XY = (720, 400)
 CARDS_XY_X = 104
 CARDS_Y = 1204
 CAPTION_X = 80
-CAPTION_Y = 1506  # 설명구간(카드) 자막 전용 — 카드(CARDS_Y=1204, 높이~290)가 위에 있어서 못 올림
-# 2026-08-27: 유튜브 쇼츠 앱이 재생 중 화면 하단에 "눈앞에 있는 사물 검색"(구글 렌즈) 안내
-# 배너를 띄우는데, 이게 정확히 이 높이(약 1500~1650)와 겹쳐서 훅 구간 자막이 가려진다는
-# 사용자 스크린샷 제보로 훅 전용 자막 Y를 따로 분리해서 위로 올림. 훅 구간엔 카드가 없어서
-# 자유롭게 올릴 수 있음(설명구간 자막 CAPTION_Y는 카드 때문에 그대로 둠 — 그쪽도 같은
-# 문제가 있을 수 있으나 카드 위치까지 같이 옮겨야 해서 별도 검토 필요).
+# 2026-08-27: 설명구간(카드) 자막은 완전히 제거함 — 카드에 이미 같은 문구가 적혀있어
+# 중복이었고, 그 위치(옛 CAPTION_Y=1506)가 유튜브 쇼츠의 "눈앞에 있는 사물 검색"(구글
+# 렌즈) 안내 배너와 겹친다는 사용자 스크린샷 제보도 있었음 — 자막을 없애서 둘 다 해결.
+# 훅 구간엔 카드가 없어서 자막을 그대로 유지하되, 같은 렌즈 배너 문제를 피하려고 위로 올림.
 HOOK_CAPTION_Y = 1320
 # 2026-08-27: CTA 자막+버튼을 하단(1380/1580)에 두니 위치가 어색하다는 피드백 —
 # 아바타 얼굴(대략 555~930)과 두 손 모은 제스처(대략 1200~1515) 사이, 화면
@@ -188,17 +186,11 @@ def build_middle_segment(work_dir: Path, durs, starts, ends, total_dur: float) -
         lines.append(f"[{prev}][{idx}:v]overlay={BADGE_XY[0]}:{BADGE_XY[1]}:enable='between(t\\,{lo:.3f}\\,{hi:.3f})':shortest=1[{nxt}];")
         prev = nxt
 
-    caption_base = badge_base + n
-    for i in range(n):
-        idx = caption_base + i
-        lo = switches[i] + (SWITCH_EPS / 2 if i > 0 else 0)
-        hi = switches[i + 1] - (SWITCH_EPS / 2 if i < n - 1 else 0)
-        nxt = f"ucap{i}" if i < n - 1 else "u7"
-        lines.append(f"[{prev}][{idx}:v]overlay={CAPTION_X}:{CAPTION_Y}:enable='between(t\\,{lo:.3f}\\,{hi:.3f})':shortest=1[{nxt}];")
-        prev = nxt
-
-    vignette_idx = caption_base + n
-    lines.append(f"[u7][{vignette_idx}:v]overlay=0:0:shortest=1[vout]")
+    # 2026-08-27: 설명구간 자막(카드 값 텍스트를 그대로 반복) 제거 — 카드 자체에 이미
+    # 같은 문구가 적혀있어서 중복이었고, 자막 위치가 유튜브 쇼츠의 렌즈 배너와 겹치는
+    # 문제도 이걸로 같이 해결됨(카드 위치를 따로 재설계할 필요가 없어짐).
+    vignette_idx = badge_base + n
+    lines.append(f"[{prev}][{vignette_idx}:v]overlay=0:0:shortest=1[vout]")
 
     filter_path = work_dir / "filter_middle.txt"
     filter_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -217,8 +209,6 @@ def build_middle_segment(work_dir: Path, durs, starts, ends, total_dur: float) -
     cmd += ["-loop", "1", "-i", str(work_dir / "ai_tag.png")]
     for i in range(n):
         cmd += ["-loop", "1", "-i", str(work_dir / f"step_badge{i+1}.png")]
-    for i in range(n):
-        cmd += ["-loop", "1", "-i", str(work_dir / f"caption_beat{i+1}.png")]
     cmd += ["-loop", "1", "-i", str(work_dir / "vignette.png")]
     cmd += ["-i", str(work_dir / "combined_audio.wav")]
     out_path = work_dir / "middle_segment.mp4"
