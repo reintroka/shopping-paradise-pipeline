@@ -182,12 +182,13 @@ def main():
 
     soft_step("롱폼 자동 컴파일", _compile_longform_step)
 
-    # 13. used_products.json + shorts_log.json(+longform_counter.json, 있으면) 커밋
-    # (핵심 - 중복 방지를 위해 반드시 반영). longform_counter.json은 첫 롱폼이
-    # 만들어지기 전까지는 존재하지 않으므로, 존재하는 파일만 add해야
-    # "pathspec did not match" 에러로 이 필수 스텝 전체가 죽는 걸 피할 수 있다.
+    # 13. used_products.json + shorts_log.json + character_image_history.json
+    # (+longform_counter.json, 있으면) 커밋 (핵심 - 중복 방지를 위해 반드시 반영).
+    # longform_counter.json/character_image_history.json은 첫 실행 전까지는 존재하지
+    # 않을 수 있으므로, 존재하는 파일만 add해야 "pathspec did not match" 에러로 이
+    # 필수 스텝 전체가 죽는 걸 피할 수 있다.
     trackable = [
-        f for f in ("used_products.json", "shorts_log.json", "longform_counter.json")
+        f for f in ("used_products.json", "shorts_log.json", "longform_counter.json", "character_image_history.json")
         if (REPO_ROOT / f).exists()
     ]
     run(["git", "-C", str(REPO_ROOT), "add", *trackable])

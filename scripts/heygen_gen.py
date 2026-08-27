@@ -23,6 +23,10 @@ VOICE_IDS = {
 
 API_KEY_ENV = "HEYGEN_API_KEY"
 
+HERE = Path(__file__).resolve().parent
+REPO_ROOT = HERE.parent
+CHAR_HISTORY_PATH = REPO_ROOT / "character_image_history.json"
+
 
 def _headers(extra=None):
     h = {"x-api-key": os.environ[API_KEY_ENV]}
@@ -101,11 +105,40 @@ def download(url: str, out_path: Path):
         out_path.write_bytes(resp.read())
 
 
-def pick_char_image(char_dir: Path, prefer_keywords, avoid_path=None):
-    files = list(char_dir.glob("*.jpeg"))
-    preferred = [f for f in files if any(k in f.name.lower() for k in prefer_keywords) and f != avoid_path]
-    pool = preferred if preferred else [f for f in files if f != avoid_path]
-    return random.choice(pool)
+def _load_char_history() -> dict:
+    if CHAR_HISTORY_PATH.exists():
+        return json.loads(CHAR_HISTORY_PATH.read_text(encoding="utf-8"))
+    return {}
+
+
+def _save_char_history(history: dict):
+    CHAR_HISTORY_PATH.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def pick_char_image(char_dir: Path, character: str, role: str, avoid_path=None) -> Path:
+    """준비해둔 캐릭터 시트(장당 27~28장)를 전부 돌아가며 쓰도록 이력 기록.
+
+    2026-08-27: 예전엔 키워드로 좁힌 후보군(예: hook="pointing/office/desk")에서 매번
+    완전 랜덤으로 뽑아서, 실제 매칭되는 사진이 2장뿐인 경우가 있어 같은 사진이 자주
+    반복되고 나머지 25장 이상이 거의 안 쓰이는 문제가 있었음("캐릭터 시트 많이 만들어
+    둔거 잘 활용해서 돌아가면서, 중복으로 내보내지 말라"는 피드백). 이제 키워드 제한
+    없이 전체 폴더를 대상으로, 한 사이클(전체 장수) 다 쓰기 전엔 같은 사진이 다시
+    나오지 않도록 사용 이력을 `character_image_history.json`에 기록. 다 쓰면 이력을
+    비우고 새 사이클 시작.
+    """
+    files = sorted(char_dir.glob("*.jpeg"))
+    history = _load_char_history()
+    key = f"{character}_{role}"
+    used = set(history.get(key, []))
+    candidates = [f for f in files if f.name not in used and f != avoid_path]
+    if not candidates:
+        used = set()
+        candidates = [f for f in files if f != avoid_path]
+    picked = random.choice(candidates)
+    used.add(picked.name)
+    history[key] = sorted(used)
+    _save_char_history(history)
+    return picked
 
 
 def main():
@@ -122,8 +155,8 @@ def main():
     script_data = json.loads(open(args.script_json, encoding="utf-8").read())
     voice_id = VOICE_IDS[args.character]
 
-    hook_img = pick_char_image(char_dir, ["pointing", "office", "desk"])
-    cta_img = pick_char_image(char_dir, ["smiling", "sitting"], avoid_path=hook_img)
+    hook_img = pick_char_image(char_dir, args.character, "hook")
+    cta_img = pick_char_image(char_dir, args.character, "cta", avoid_path=hook_img)
     print(f"훅 이미지: {hook_img.name}, CTA 이미지: {cta_img.name}")
 
     hook_asset = upload_image(hook_img)
