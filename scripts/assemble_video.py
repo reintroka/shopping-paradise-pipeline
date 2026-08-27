@@ -14,6 +14,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from PIL import Image
+
 HERE = Path(__file__).resolve().parent
 SFX_DIR = HERE.parent / "assets" / "sfx"
 
@@ -39,7 +41,9 @@ HOOK_CAPTION_Y = 1320
 # 기준으로 잡은 값이라, 캐릭터/구도가 많이 다른 아바타를 쓰면 겹칠 수 있음 —
 # 그때는 이 두 값을 다시 확인할 것.
 CTA_CAPTION_Y = 1030
-CTA_BUTTON_Y = 1140
+CTA_BUTTON_Y = 1140  # 자막이 1줄일 때 기준값 — 2줄이면 build_cta_segment()가 실제
+# caption_cta.png 높이를 읽어서 이 밑으로 내려 겹침을 막는다(아래 참고).
+CTA_CAPTION_BUTTON_GAP = 20
 
 # 2026-08-27: 헤이젠 훅/CTA 오디오는 그대로(raw) 붙여왔는데, 나레이션(google_tts.py)에는
 # loudnorm을 적용해서 세 구간(훅/설명/CTA) 볼륨이 서로 다르게 들리는 문제가 있었음.
@@ -246,6 +250,12 @@ def build_hook_segment(work_dir: Path) -> Path:
 
 
 def build_cta_segment(work_dir: Path) -> Path:
+    # 자막이 2줄이 되면(build_graphics.build_caption의 max_lines=2) 고정 CTA_BUTTON_Y로는
+    # 버튼과 겹친다(2026-08-27 사용자 스크린샷 제보로 발견) — 실제로 만들어진
+    # caption_cta.png 높이를 읽어서 그 밑에 여유(CTA_CAPTION_BUTTON_GAP)를 두고 버튼을
+    # 놓는다. 1줄일 때는 기존 CTA_BUTTON_Y와 사실상 같은 위치가 나옴.
+    caption_h = Image.open(work_dir / "caption_cta.png").height
+    button_y = max(CTA_CAPTION_Y + caption_h + CTA_CAPTION_BUTTON_GAP, CTA_BUTTON_Y)
     filter_txt = (
         "[0:v]scale=1080:1920,setsar=1,fps=25[base];\n"
         f"[base][1:v]overlay={LOGO_XY[0]}:{LOGO_XY[1]}:shortest=1[u1];\n"
@@ -253,7 +263,7 @@ def build_cta_segment(work_dir: Path) -> Path:
         f"[u2][3:v]overlay={CAPTION_X}:{CTA_CAPTION_Y}:shortest=1[u3];\n"
         "[4:v]scale=w='560*(1+0.045*sin(2*3.14159265*t/1.1))':"
         "h='108*(1+0.045*sin(2*3.14159265*t/1.1))':eval=frame[btn];\n"
-        f"[u3][btn]overlay=x='(1080-w)/2':y={CTA_BUTTON_Y}:eval=frame:shortest=1[vout];\n"
+        f"[u3][btn]overlay=x='(1080-w)/2':y={button_y}:eval=frame:shortest=1[vout];\n"
         f"[0:a]{LOUDNORM_TARGET}[aout]\n"
     )
     filter_path = work_dir / "filter_cta.txt"
