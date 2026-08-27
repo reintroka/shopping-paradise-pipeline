@@ -126,12 +126,18 @@ def pick_char_image(char_dir: Path, character: str, role: str, avoid_path=None) 
     나오지 않도록 사용 이력을 `character_image_history.json`에 기록. 다 쓰면 이력을
     비우고 새 사이클 시작.
 
-    단, 파일명에 "laptop"이 들어간 사진(노트북을 가리키거나 타이핑하는 포즈)은 후보에서
-    아예 제외 — 이건 LG그램15(노트북) 리뷰용으로 만든 사진이라 그 상품일 때만 맞고,
-    상품은 매번 랜덤으로 바뀌는데(공기청정기, 로봇청소기 등) 노트북을 가리키는 모습이
-    나오면 상품과 안 맞아서 어색해 보인다는 피드백으로 제외함.
+    단, 노트북이 화면에 나오는 사진은 후보에서 아예 제외 — LG그램15(노트북) 리뷰용으로
+    찍은 사진들이라 그 상품일 때만 맞고, 상품은 매번 랜덤으로 바뀌는데(공기청정기,
+    로봇청소기 등) 노트북이 보이면 상품과 안 맞아서 어색하다는 피드백으로 제외함.
+    파일명에 "laptop"이 없어도 실제로는 노트북이 나오는 사진(예: "sitting_at_desk")이
+    있어서, 파일명 필터만으론 못 잡고 직접 이미지를 확인해서 찾은 목록으로 제외함 —
+    새 캐릭터 시트를 추가할 땐 이 목록도 다시 확인할 것.
     """
-    files = sorted(f for f in char_dir.glob("*.jpeg") if "laptop" not in f.name.lower())
+    EXCLUDE_LAPTOP_VISIBLE = {"person_sitting_at_desk_202608261740.jpeg"}
+    files = sorted(
+        f for f in char_dir.glob("*.jpeg")
+        if "laptop" not in f.name.lower() and f.name.lower() not in EXCLUDE_LAPTOP_VISIBLE
+    )
     history = _load_char_history()
     key = f"{character}_{role}"
     used = set(history.get(key, []))
