@@ -17,6 +17,7 @@
   11. shorts_log.json에 이번 발행 기록 추가
   12. 숏츠가 6개(3일치) 쌓였으면 롱폼으로 이어붙여 별도 업로드 (compile_longform) — 실패해도 계속 진행
   13. used_products.json + shorts_log.json(+longform_counter.json) 변경사항 커밋+푸시 (파이프라인 레포 자체)
+  14. 텔레그램으로 실행 요약 알림 (2026-08-27 도입, 성공/실패 무관 항상 전송)
 """
 import argparse
 import json
@@ -39,6 +40,7 @@ import post_comment  # noqa: E402
 import update_link_page  # noqa: E402
 import shorts_log  # noqa: E402
 import compile_longform  # noqa: E402
+import notify_telegram  # noqa: E402
 
 
 def run(cmd, **kw):
@@ -46,14 +48,27 @@ def run(cmd, **kw):
     return subprocess.run(cmd, check=True, **kw)
 
 
+soft_step_results = []
+
+
 def soft_step(name, fn):
-    """부가 기능 스텝: 실패해도 파이프라인 전체를 막지 않는다."""
+    """부가 기능 스텝: 실패해도 파이프라인 전체를 막지 않는다. 텔레그램 요약용으로 결과 기록."""
     try:
         fn()
+        soft_step_results.append((name, True, None))
         return True
     except Exception as e:
         print(f"[경고] {name} 실패 (파이프라인은 계속 진행): {e}")
+        soft_step_results.append((name, False, str(e)))
         return False
+
+
+def notify(text: str) -> None:
+    """텔레그램 알림 전송 자체가 실패해도 파이프라인 결과에 영향을 주지 않게 감싼다."""
+    try:
+        notify_telegram.send(text)
+    except Exception as e:
+        print(f"[경고] 텔레그램 알림 전송 실패: {e}")
 
 
 def main():
@@ -169,6 +184,20 @@ def main():
 
     print(f"\n✅ 파이프라인 완료: {video_info['url']}")
 
+    # 14. 텔레그램 요약 알림 (부가 단계 실패가 있어도 여기 다 담아서 항상 전송)
+    lines = [
+        f"[쇼핑의천국] {args.character} 발행 완료",
+        f"상품: {product['productName'][:20]} ({product['productPrice']:,}원대)",
+        f"영상: {video_info['url']}",
+    ]
+    for name, ok, err in soft_step_results:
+        lines.append(f"- {name}: {'성공' if ok else f'실패 ({err})'}")
+    notify("\n".join(lines))
+
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        notify(f"[쇼핑의천국] 파이프라인 실패 (영상 발행 안 됨)\n{e}")
+        raise
