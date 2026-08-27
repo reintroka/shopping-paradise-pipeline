@@ -173,9 +173,24 @@ def build_title_block(out_dir: Path, name_text: str, price_text: str):
     d.rounded_rectangle([60, 10, title_w - 60, title_h - 40], radius=14, outline=GOLD, width=2)
     d.rounded_rectangle([66, 16, title_w - 66, title_h - 46], radius=11, outline=GOLD, width=1)
 
-    f1 = sfont(52, "Bold")
-    tracking = 10
+    # 2026-08-27: 상품명이 길면(20자 넘는 가전제품명 등) 고정 52px로는 좌우 장식 밖으로
+    # 삐져나가 잘려 보이는 문제 — 폭에 맞춰 폰트(+트래킹)를 줄이고, 그래도 안 맞으면 말줄임.
+    MAX_NAME_W = 660
+    size1, min_size1, tracking = 52, 30, 10
+    f1 = sfont(size1, "Bold")
     tracked_w = tracked_width(name_text, f1, tracking)
+    while tracked_w > MAX_NAME_W and size1 > min_size1:
+        size1 -= 2
+        tracking = max(4, round(10 * size1 / 52))
+        f1 = sfont(size1, "Bold")
+        tracked_w = tracked_width(name_text, f1, tracking)
+    if tracked_w > MAX_NAME_W:
+        original = name_text
+        while tracked_width(name_text + "…", f1, tracking) > MAX_NAME_W and len(name_text) > 1:
+            name_text = name_text[:-1]
+        if name_text != original:
+            name_text = name_text.rstrip() + "…"
+        tracked_w = tracked_width(name_text, f1, tracking)
     name_x = (title_w - tracked_w) / 2
     name_y = 30
 
@@ -288,27 +303,50 @@ def build_step_badge(out_dir: Path, n: int, size=176):
     im.save(out_dir / f"step_badge{n}.png")
 
 
-def build_caption(out_dir: Path, name: str, text: str, max_width=920, font_size=38, min_font_size=22):
-    """자막은 항상 한 줄로만 렌더링한다 (2026-08-27, 2~3줄로 늘어나는 게 지저분하다는
-    피드백으로 줄바꿈 대신 폰트 크기를 줄여서 한 줄에 맞추는 방식으로 변경)."""
+def _wrap_lines(text, font, draw, max_w):
+    words = text.split(" ")
+    lines, cur = [], ""
+    for word in words:
+        trial = (cur + " " + word).strip()
+        if draw.textlength(trial, font=font) <= max_w or not cur:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def build_caption(out_dir: Path, name: str, text: str, max_width=920, font_size=38, min_font_size=24, max_lines=2):
+    """자막은 최대 2줄까지만 허용 (2026-08-27, 처음엔 항상 1줄로 강제했다가 — 긴 문장에서
+    글자가 너무 작아진다는 피드백으로 2줄까지 허용하고, 그래도 안 맞으면 폰트를 줄임)."""
     tmp = Image.new("RGBA", (10, 10))
     d0 = ImageDraw.Draw(tmp)
+    inner_w = max_width - 60
     size = font_size
     f = sfont(size, "SemiBold")
-    while d0.textlength(text, font=f) > max_width - 60 and size > min_font_size:
+    lines = _wrap_lines(text, f, d0, inner_w)
+    while len(lines) > max_lines and size > min_font_size:
         size -= 2
         f = sfont(size, "SemiBold")
+        lines = _wrap_lines(text, f, d0, inner_w)
+    if len(lines) > max_lines:
+        lines = lines[: max_lines - 1] + [" ".join(lines[max_lines - 1 :])]
 
     line_h = int(size * 1.3)
+    line_gap = 6
     pad = 20
-    h = line_h + pad * 2
+    h = line_h * len(lines) + line_gap * (len(lines) - 1) + pad * 2
     w = max_width
     pill = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(pill)
     d.rounded_rectangle([0, 0, w - 1, h - 1], radius=18, fill=(18, 14, 10, 175))
     d.rounded_rectangle([0, 0, w - 1, 2], radius=0, fill=(*GOLD_LIGHT[:3], 200))
-    lw = d0.textlength(text, font=f)
-    d.text(((w - lw) / 2, pad), text, font=f, fill=(250, 246, 238, 255))
+    for i, line in enumerate(lines):
+        lw = d0.textlength(line, font=f)
+        y = pad + i * (line_h + line_gap)
+        d.text(((w - lw) / 2, y), line, font=f, fill=(250, 246, 238, 255))
     pill.save(out_dir / f"caption_{name}.png")
 
 
