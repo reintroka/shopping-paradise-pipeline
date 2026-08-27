@@ -72,10 +72,11 @@ def create_video(asset_id: str, script: str, voice_id: str, title: str) -> str:
         "voice_id": voice_id,
         "voice_settings": {"locale": "ko-KR"},
         "aspect_ratio": "9:16",
-        # aspect_ratio만으로는 HeyGen이 1080x1920보다 낮은 기본 해상도로 내보내는 경우가
-        # 있어서(최종 합성 시 ffmpeg가 1080x1920으로 업스케일하면서 화질이 뭉개짐/블록깨짐이
-        # 생김), 최종 출력 해상도와 동일하게 명시적으로 지정한다.
-        "dimension": {"width": 1080, "height": 1920},
+        # 2026-08-27: HeyGen v3 API가 "dimension":{width,height} 커스텀 객체를 더 이상
+        # 안 받고(strict schema, "Extra inputs are not permitted" 400) resolution enum으로
+        # 교체함. aspect_ratio만으로는 기본 해상도가 낮게 나와 최종 합성 시 ffmpeg 업스케일로
+        # 화질이 뭉개지는 문제가 있었으므로, 최종 출력(1080x1920)에 맞춰 1080p를 명시.
+        "resolution": "1080p",
         "title": title,
     }
     result = _post_json("https://api.heygen.com/v3/videos", body)
