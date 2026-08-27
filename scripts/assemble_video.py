@@ -28,7 +28,13 @@ BADGE_XY = (720, 400)
 CARDS_XY_X = 104
 CARDS_Y = 1204
 CAPTION_X = 80
-CAPTION_Y = 1506
+CAPTION_Y = 1506  # 설명구간(카드) 자막 전용 — 카드(CARDS_Y=1204, 높이~290)가 위에 있어서 못 올림
+# 2026-08-27: 유튜브 쇼츠 앱이 재생 중 화면 하단에 "눈앞에 있는 사물 검색"(구글 렌즈) 안내
+# 배너를 띄우는데, 이게 정확히 이 높이(약 1500~1650)와 겹쳐서 훅 구간 자막이 가려진다는
+# 사용자 스크린샷 제보로 훅 전용 자막 Y를 따로 분리해서 위로 올림. 훅 구간엔 카드가 없어서
+# 자유롭게 올릴 수 있음(설명구간 자막 CAPTION_Y는 카드 때문에 그대로 둠 — 그쪽도 같은
+# 문제가 있을 수 있으나 카드 위치까지 같이 옮겨야 해서 별도 검토 필요).
+HOOK_CAPTION_Y = 1320
 # 2026-08-27: CTA 자막+버튼을 하단(1380/1580)에 두니 위치가 어색하다는 피드백 —
 # 아바타 얼굴(대략 555~930)과 두 손 모은 제스처(대략 1200~1515) 사이, 화면
 # 중앙에 가까운 빈 공간(약 930~1200)으로 옮김. hook_v2/cta_v2 원본 프레임
@@ -230,7 +236,7 @@ def build_hook_segment(work_dir: Path) -> Path:
         f"[base][1:v]overlay={LOGO_XY[0]}:{LOGO_XY[1]}:shortest=1[u1];\n"
         f"[u1][2:v]overlay={AI_TAG_XY[0]}:{AI_TAG_XY[1]}:shortest=1[u2];\n"
         f"[u2][3:v]overlay={TITLE_XY[0]}:{TITLE_XY[1]}:shortest=1[u3];\n"
-        f"[u3][4:v]overlay={CAPTION_X}:{CAPTION_Y}:shortest=1[vout];\n"
+        f"[u3][4:v]overlay={CAPTION_X}:{HOOK_CAPTION_Y}:shortest=1[vout];\n"
         f"[0:a]{LOUDNORM_TARGET}[aout]\n"
     )
     filter_path = work_dir / "filter_hook.txt"
