@@ -97,6 +97,19 @@ def save_used(used):
     USED_PATH.write_text(json.dumps(used, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+# 2026-08-28: productId 완전일치만 걸러서는 "LG전자 퓨리케어 360도 Hit"과 "LG전자
+# 퓨리케어 360도 오브제컬렉션 플러스"처럼 브랜드+제품라인이 같은 변형 상품(용량/모델
+# 만 다름)이 서로 다른 productId로 반복 노출되는 문제가 있었다(사용자가 "같은건데
+# 뒤에 버전만 다른 식으로 계속 올라간다" 지적으로 발견). 최근 사용한 상품명의 앞
+# 두 단어(보통 브랜드+제품라인)를 시그니처로 뽑아 최근 목록과 겹치면 건너뛴다.
+RECENT_SIMILARITY_WINDOW = 20
+
+
+def _signature(product_name: str) -> str:
+    tokens = product_name.replace(",", " ").split()
+    return " ".join(tokens[:2]).lower()
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--out", required=True, help="선정된 상품 JSON을 저장할 경로")
@@ -104,6 +117,7 @@ def main():
 
     used = load_used()
     used_ids = {u["productId"] for u in used}
+    recent_signatures = {_signature(u["productName"]) for u in used[-RECENT_SIMILARITY_WINDOW:]}
 
     keywords = KEYWORDS[:]
     random.shuffle(keywords)
@@ -119,6 +133,7 @@ def main():
             if item["productPrice"] >= MIN_PRICE
             and item["productId"] not in used_ids
             and item.get("isRocket") is True
+            and _signature(item["productName"]) not in recent_signatures
         ]
         if candidates:
             chosen = random.choice(candidates)

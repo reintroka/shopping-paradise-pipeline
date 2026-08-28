@@ -48,7 +48,26 @@ def run(cmd, **kw):
     return subprocess.run(cmd, check=True, **kw)
 
 
+def push_with_retry(repo_root: Path, max_tries: int = 3) -> None:
+    """2026-08-28: female-noon/male-evening 두 루틴이 같은 repo에 커밋+푸시하다 보니
+    origin이 그 사이 앞서나가면 단순 `git push`가 non-fast-forward/네트워크 문제로
+    실패하는 사고가 났다(used_products.json이 반영 안 돼 이미 쓴 상품이 다시 뽑힘).
+    실패하면 fetch+rebase 후 재시도한다."""
+    for attempt in range(1, max_tries + 1):
+        try:
+            run(["git", "-C", str(repo_root), "push"])
+            return
+        except subprocess.CalledProcessError as e:
+            if attempt == max_tries:
+                raise
+            print(f"[push_with_retry] push 실패(시도 {attempt}/{max_tries}): {e} — fetch+rebase 후 재시도")
+            run(["git", "-C", str(repo_root), "fetch", "origin"])
+            run(["git", "-C", str(repo_root), "rebase", "origin/main"])
+
+
 soft_step_results = []
+uploaded_video_url = None  # 2026-08-28: 업로드 성공 이후(9~13단계) 실패 시 텔레그램 메시지가
+# "영상 발행 안 됨"이라고 잘못 말하지 않도록, 업로드 성공 여부를 최상위 except에서도 알 수 있게 기록.
 
 
 def soft_step(name, fn):
@@ -145,6 +164,8 @@ def main():
     ])
     video_info = json.loads(video_id_path.read_text(encoding="utf-8"))
     video_id = video_info["video_id"]
+    global uploaded_video_url
+    uploaded_video_url = video_info["url"]
 
     # 8. X 포스트 (부가) — 2026-08-27: 쿠팡 상품 이미지 첨부 추가
     soft_step("X 포스트", lambda: run([
@@ -195,7 +216,7 @@ def main():
     run(["git", "-C", str(REPO_ROOT), "-c", "user.email=bot@shopping-paradise.local",
          "-c", "user.name=shopping-paradise-bot", "commit", "-m",
          f"Mark product {product['productId']} as used, log short {video_id}"])
-    run(["git", "-C", str(REPO_ROOT), "push"])
+    push_with_retry(REPO_ROOT)
 
     print(f"\n✅ 파이프라인 완료: {video_info['url']}")
 
@@ -219,5 +240,11 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        notify(f"[쇼핑의천국] 파이프라인 실패 (영상 발행 안 됨)\n{e}")
+        if uploaded_video_url:
+            notify(
+                f"[쇼핑의천국] 영상은 발행됐지만 후처리 단계 실패\n"
+                f"영상: {uploaded_video_url}\n{e}"
+            )
+        else:
+            notify(f"[쇼핑의천국] 파이프라인 실패 (영상 발행 안 됨)\n{e}")
         raise
