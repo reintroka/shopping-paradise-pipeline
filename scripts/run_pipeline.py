@@ -218,7 +218,7 @@ def main():
     # 않을 수 있으므로, 존재하는 파일만 add해야 "pathspec did not match" 에러로 이
     # 필수 스텝 전체가 죽는 걸 피할 수 있다.
     trackable = [
-        f for f in ("used_products.json", "shorts_log.json", "longform_counter.json", "character_image_history.json")
+        f for f in ("used_products.json", "shorts_log.json", "longform_counter.json", "character_image_history.json", "x_post_history.json")
         if (REPO_ROOT / f).exists()
     ]
     run(["git", "-C", str(REPO_ROOT), "add", *trackable])

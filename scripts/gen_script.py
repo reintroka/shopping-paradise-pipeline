@@ -21,6 +21,10 @@ import argparse
 import json
 import os
 import urllib.request
+from pathlib import Path
+
+X_POST_HISTORY_PATH = Path(__file__).resolve().parent.parent / "x_post_history.json"
+X_POST_HISTORY_MAX = 12
 
 PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 쇼츠 채널(쿠팡파트너스 제품 추천)의 카피라이터입니다.
 아래 상품 정보를 보고 45초짜리 숏츠 대본을 JSON으로 만드세요.
@@ -57,7 +61,17 @@ PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 쇼츠 채널(쿠팡�
 - x_post: X(트위터) 홍보 문구. 140~220자 분량으로 충분히 길게 써서 훅 문장 + 핵심 셀링포인트
   2~3개(가격/스펙 등 구체적으로) + "프로필 링크에서 확인하세요" 같은 유도 문구 + 관련
   해시태그 2~3개까지 포함할 것 (X 게시글 글자수 한도는 280자). 너무 짧고 밋밋한 한 줄짜리
-  문구 금지. 링크 URL 자체는 절대 넣지 말 것(프로필 바이오 링크로 유도)
+  문구 금지. 링크 URL 자체는 절대 넣지 말 것(프로필 바이오 링크로 유도).
+  **X가 반복되는 문장 구조를 스팸/중복 콘텐츠로 판단해 게시를 거부하는 사례가 있었음
+  (2026-08-28) — 아래 [최근 X 포스트]와 겹치지 않도록 반드시 다음을 매번 바꿀 것:**
+  1) 첫 문장의 문형(예: 매번 "~하셨죠?"로 시작하는 질문형 반복 금지 — 감탄사로 시작,
+     상황 묘사로 시작, 숫자/가격으로 시작 등 다양하게), 2) 유도 문구 표현("프로필
+     링크에서 확인하세요" 외에도 "프로필에서 바로 확인 가능해요", "지금 프로필 클릭!"
+     등으로 매번 다르게), 3) 해시태그 구성과 순서(#쇼핑의천국을 항상 맨 끝 고정 위치에
+     기계적으로 반복하지 말고, 상품 관련 태그 2개 + 브랜드 태그 조합 순서를 매번 바꿀 것).
+
+[최근 X 포스트 (이 구조/표현과 겹치지 않게 새로 쓸 것, 없으면 빈 목록)]
+{recent_x_posts}
 
 [출력 형식 - JSON만 출력, 다른 텍스트 없이]
 {{"hook_title_line1":"","hook_title_line2":"","hook_speech":"","cta_speech":"",
@@ -87,6 +101,17 @@ def parse_json_response(text: str) -> dict:
     return json.loads(text)
 
 
+def load_x_post_history() -> list[str]:
+    if X_POST_HISTORY_PATH.exists():
+        return json.loads(X_POST_HISTORY_PATH.read_text(encoding="utf-8"))
+    return []
+
+
+def save_x_post_history(history: list[str], new_post: str) -> None:
+    history = (history + [new_post])[-X_POST_HISTORY_MAX:]
+    X_POST_HISTORY_PATH.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--product-json", required=True)
@@ -94,15 +119,20 @@ def main():
     args = p.parse_args()
 
     product = json.loads(open(args.product_json, encoding="utf-8").read())
+    history = load_x_post_history()
+    recent_x_posts = "\n".join(f"- {h}" for h in history[-5:]) or "(없음)"
     prompt = PROMPT_TEMPLATE.format(
         product_name=product["productName"],
         price=f"{product['productPrice']:,}원",
         keyword=product.get("keyword", ""),
+        recent_x_posts=recent_x_posts,
     )
     text = call_gemini(prompt)
     data = parse_json_response(text)
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    if data.get("x_post"):
+        save_x_post_history(history, data["x_post"])
     print(f"대본 생성 완료: {args.out}")
 
 
