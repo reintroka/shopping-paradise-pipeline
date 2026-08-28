@@ -17,9 +17,11 @@ def run(cmd, cwd=None):
 
 
 def push_with_retry(repo_dir, max_tries: int = 3) -> None:
+    """run_pipeline.py의 push_with_retry와 동일한 이유로 `HEAD:main`을 명시한다
+    (2026-08-28, 클라우드 샌드박스가 detached HEAD로 클론하는 경우 대비)."""
     for attempt in range(1, max_tries + 1):
         try:
-            run(["git", "-C", repo_dir, "push"])
+            run(["git", "-C", repo_dir, "push", "origin", "HEAD:main"])
             return
         except subprocess.CalledProcessError as e:
             if attempt == max_tries:

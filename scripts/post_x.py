@@ -166,6 +166,18 @@ def post_tweet(text: str, media_id: str = None) -> dict:
 VARIATIONS = ["🛍️", "✨", "👍", "🔥", "📦"]
 
 
+def _http_error_with_body(e: urllib.error.HTTPError) -> RuntimeError:
+    """2026-08-28: 실제 프로덕션 실행(제품 이미지+생성된 문구)에서 403이 계속
+    났는데, 그동안 str(HTTPError)가 "HTTP Error 403: Forbidden"만 보여주고
+    실제 응답 바디(X가 왜 거부했는지 설명하는 JSON)는 버려지고 있어서 원인을
+    특정할 수 없었다. 응답 바디를 읽어 메시지에 포함시킨다."""
+    try:
+        body = e.read().decode("utf-8", errors="replace")
+    except Exception:
+        body = "(응답 바디 읽기 실패)"
+    return RuntimeError(f"HTTP {e.code}: {body}")
+
+
 def post_tweet_with_retry(text: str, media_id: str = None, max_tries: int = 2) -> dict:
     """403은 대부분 중복 콘텐츠 거부로 추정됨 — 문구를 살짝 바꿔서 1회 재시도."""
     last_err = None
@@ -174,10 +186,10 @@ def post_tweet_with_retry(text: str, media_id: str = None, max_tries: int = 2) -
         try:
             return post_tweet(attempt_text, media_id)
         except urllib.error.HTTPError as e:
-            last_err = e
+            last_err = _http_error_with_body(e)
             if e.code != 403:
-                raise
-            print(f"[post_x] 403 (시도 {i + 1}/{max_tries}), 문구 변형 후 재시도")
+                raise last_err
+            print(f"[post_x] {last_err} (시도 {i + 1}/{max_tries}), 문구 변형 후 재시도")
     raise last_err
 
 
@@ -186,6 +198,9 @@ if __name__ == "__main__":
     p.add_argument("--text", required=True)
     p.add_argument("--image", help="첨부할 상품 이미지 경로 (선택)")
     args = p.parse_args()
-    media_id = upload_media(args.image) if args.image else None
+    try:
+        media_id = upload_media(args.image) if args.image else None
+    except urllib.error.HTTPError as e:
+        raise _http_error_with_body(e) from None
     result = post_tweet_with_retry(args.text, media_id)
     print(json.dumps(result, ensure_ascii=False))

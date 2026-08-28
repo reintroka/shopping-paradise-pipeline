@@ -49,13 +49,18 @@ def run(cmd, **kw):
 
 
 def push_with_retry(repo_root: Path, max_tries: int = 3) -> None:
-    """2026-08-28: female-noon/male-evening 두 루틴이 같은 repo에 커밋+푸시하다 보니
-    origin이 그 사이 앞서나가면 단순 `git push`가 non-fast-forward/네트워크 문제로
-    실패하는 사고가 났다(used_products.json이 반영 안 돼 이미 쓴 상품이 다시 뽑힘).
-    실패하면 fetch+rebase 후 재시도한다."""
+    """2026-08-28: 처음엔 female-noon/male-evening 두 루틴의 non-fast-forward 경합이라고
+    추측하고 단순 `git push` 재시도로 고쳤었는데, 실제 클라우드 루틴 실행 로그
+    (RemoteTrigger get_run_log)를 직접 열어보니 진짜 원인은 달랐다: 이 CCR 샌드박스가
+    레포를 **detached HEAD**로 클론해서 `git push`가 애초에 "fatal: You are not
+    currently on a branch"로 실패하고 있었다(non-fast-forward가 아니라 로컬에 붙어있는
+    브랜치 자체가 없는 문제라 fetch+rebase만으로는 안 고쳐짐). `git push origin
+    HEAD:main`은 로컬이 브랜치에 붙어있든 detached든 상관없이 현재 HEAD 커밋을
+    origin의 main으로 밀어넣으므로 이 문제를 근본적으로 피해간다. origin이 그 사이
+    앞서나간 경우(진짜 non-fast-forward)에는 fetch+rebase 후 재시도한다."""
     for attempt in range(1, max_tries + 1):
         try:
-            run(["git", "-C", str(repo_root), "push"])
+            run(["git", "-C", str(repo_root), "push", "origin", "HEAD:main"])
             return
         except subprocess.CalledProcessError as e:
             if attempt == max_tries:
@@ -193,15 +198,19 @@ def main():
         video_id, video_info["url"], coupang_url,
     )
 
-    # 12. 3일치(6개) 쌓였으면 롱폼 자동 제작+업로드 (부가 — 실패해도 숏츠 발행 자체는 이미 끝난 상태)
-    def _compile_longform_step():
-        pending_before = len([e for e in shorts_log.load_log() if not e.get("compiled_in")])
-        result = compile_longform.check_and_compile()
-        if result:
-            return f"롱폼 완성! {result['url']}"
-        return f"대기 중 ({pending_before}/6)"
-
-    soft_step("롱폼 자동 컴파일", _compile_longform_step)
+    # 12. 3일치(6개) 쌓였으면 롱폼 자동 제작+업로드
+    # 2026-08-28: 사용자 지시로 잠시 중단 — 숏폼 자체가 아직 상품 소싱/중복 문제로
+    # 루틴이 안 잡힌 상태라, 그게 안정화되기 전까지는 롱폼 자동합성을 돌리지 않는다.
+    # (pick_product.py 유사도 dedup + push_with_retry 수정으로 숏폼이 며칠간 안정적으로
+    # 돌아가는 걸 확인하면 아래 주석을 풀고 재개할 것.)
+    # def _compile_longform_step():
+    #     pending_before = len([e for e in shorts_log.load_log() if not e.get("compiled_in")])
+    #     result = compile_longform.check_and_compile()
+    #     if result:
+    #         return f"롱폼 완성! {result['url']}"
+    #     return f"대기 중 ({pending_before}/6)"
+    #
+    # soft_step("롱폼 자동 컴파일", _compile_longform_step)
 
     # 13. used_products.json + shorts_log.json + character_image_history.json
     # (+longform_counter.json, 있으면) 커밋 (핵심 - 중복 방지를 위해 반드시 반영).
