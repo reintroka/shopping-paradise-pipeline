@@ -2,8 +2,12 @@
 
 - 각 파이프라인 실행(run_pipeline.py) 끝에서 soft_step으로 호출됨 — 6개가 안 쌓였으면
   아무것도 안 하고 조용히 리턴(매번 호출해도 안전).
-- 이미 올라간 숏츠를 로컬에 안 남겨두므로(클라우드 실행은 매번 새 샌드박스),
-  yt-dlp로 유튜브에서 다시 내려받아 이어붙인다.
+- 이미 올라간 숏츠를 로컬에 안 남겨두므로(클라우드 실행은 매번 새 샌드박스), 우선
+  GCS 백업 버킷(shopping-paradise-daily-raw-luith, upload_youtube.py가 발행 직후
+  올려둠)에서 받고, 백업이 없는(백업 도입 이전 발행분) 경우에만 yt-dlp로 유튜브에서
+  다시 내려받는다. 2026-08-29: 클라우드 샌드박스 IP에서 yt-dlp가 유튜브 봇차단
+  ("Sign in to confirm you're not a bot")에 걸리는 걸 다른 채널(명리마스터)에서 실제
+  로그로 확인한 적 있어서, 그 우회책을 그대로 이식.
 - 6개를 다 쓰면 shorts_log.json의 해당 항목에 compiled_in(롱폼 video_id)을 표시해서
   다음에 중복으로 다시 안 묶이게 한다.
 
@@ -21,6 +25,8 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 COUNTER_PATH = REPO_ROOT / "longform_counter.json"
 
+GCS_BACKUP_BUCKET = "shopping-paradise-daily-raw-luith"
+
 
 def run(cmd, **kw):
     print("+", " ".join(cmd))
@@ -36,7 +42,30 @@ def next_volume_number() -> int:
     return n
 
 
+def _download_from_gcs_backup(video_id: str, out_path: Path) -> bool:
+    """upload_youtube.py가 발행 직후 백업해둔 원본이 있으면 그걸 받는다(유튜브 봇
+    차단 회피). 없으면(백업 이전 발행분, 또는 백업 실패분) False를 반환해 yt-dlp
+    폴백으로 넘어간다."""
+    try:
+        from google.cloud import storage
+
+        client = storage.Client()
+        bucket = client.bucket(GCS_BACKUP_BUCKET)
+        blob = bucket.blob(f"{video_id}.mp4")
+        if not blob.exists():
+            return False
+        blob.download_to_filename(str(out_path))
+        print(f"[compile_longform] GCS 백업에서 다운로드 성공: {video_id}")
+        return True
+    except Exception as exc:
+        print(f"[compile_longform] GCS 백업 다운로드 실패, yt-dlp 폴백: {exc}")
+        return False
+
+
 def download_short(video_id: str, out_path: Path):
+    if _download_from_gcs_backup(video_id, out_path):
+        return
+    print(f"[compile_longform] GCS 백업 없음, yt-dlp로 폴백: {video_id}")
     run(["yt-dlp", "-f", "mp4", "-o", str(out_path), f"https://youtu.be/{video_id}"])
 
 

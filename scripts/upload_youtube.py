@@ -23,6 +23,26 @@ EXPECTED_CHANNEL_TITLE = "쇼핑의 천국"
 AI_DISCLOSURE_TEXT = "이 영상은 AI를 활용해 제작한 순수 창작물입니다."
 COUPANG_DISCLOSURE = "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
 
+GCS_BACKUP_BUCKET = "shopping-paradise-daily-raw-luith"
+
+
+def _backup_to_gcs(video_id: str, local_path: str) -> None:
+    """업로드 성공한 mp4를 video_id 키로 GCS에 백업(3일 후 자동삭제 — 버킷
+    라이프사이클 규칙으로 처리). 다른 채널들(latte-nk-daily-raw-luith 등)과 동일한
+    목적 — compile_longform.py가 클라우드 샌드박스 IP에서 yt-dlp로 유튜브를 재다운로드
+    하다가 봇차단(429/Sign in to confirm)에 걸리는 걸 애초에 피한다. 실패해도 업로드
+    자체는 이미 끝났으니 예외를 삼키고 경고만 남긴다."""
+    try:
+        from google.cloud import storage
+
+        client = storage.Client()
+        bucket = client.bucket(GCS_BACKUP_BUCKET)
+        blob = bucket.blob(f"{video_id}.mp4")
+        blob.upload_from_filename(local_path, content_type="video/mp4")
+        print(f"[gcs백업] {video_id}.mp4 업로드 완료 (gs://{GCS_BACKUP_BUCKET}/{video_id}.mp4)")
+    except Exception as exc:
+        print(f"[경고] GCS 백업 실패, 건너뜁니다: {exc}")
+
 
 def get_credentials():
     creds = Credentials(
@@ -72,6 +92,7 @@ def upload(video_path: str, title: str, description: str, tags: list[str], coupa
 
     video_id = response["id"]
     print(f"업로드 완료 (public): https://youtu.be/{video_id}")
+    _backup_to_gcs(video_id, video_path)
     return video_id
 
 
