@@ -2,3 +2,4 @@ work/
 test_work/
 *.pyc
 __pycache__/
+secrets/
