@@ -1,6 +1,11 @@
-"""쿠팡파트너스 API로 고가 전자제품 하나를 골라서 JSON으로 출력한다.
+"""쿠팡파트너스 API로 상품 하나를 골라서 JSON으로 출력한다.
 
-- 여러 키워드로 검색해서 가격 하한(기본 300,000원) 이상인 것만 후보로 삼는다.
+- 여러 키워드로 검색해서 카테고리별 가격 하한 이상인 것만 후보로 삼는다
+  (2026-08-29: 전자제품 단일 카테고리에서 뷰티/생활용품·가전가구까지 소싱 다양화 —
+  카테고리마다 시세가 달라 가격 하한을 키워드별로 다르게 둠. 전자제품처럼 원래
+  단가가 높은 카테고리는 300,000원, 뷰티/생활용품처럼 원래 단가가 낮은 카테고리는
+  20,000~30,000원 등으로 낮춤. 하나의 MIN_PRICE로 통일하면 저가 카테고리 후보가
+  전부 걸러져서 사실상 전자제품만 뽑히는 문제가 있었음).
 - used_products.json(레포에 커밋됨)에 이미 쓴 productId는 건너뛴다.
 - **로켓배송(isRocket=true)만 후보로 삼는다** — 쿠팡파트너스 검색 API는 후기수/재고
   필드를 제공하지 않아서(2026-08-26 확인) "후기 많은" 필터는 구현 불가. 대신 로켓배송은
@@ -21,11 +26,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DOMAIN = "https://api-gateway.coupang.com"
-KEYWORDS = [
-    "노트북", "태블릿", "무선이어폰", "스마트워치", "모니터",
-    "커피머신", "로봇청소기", "공기청정기", "게이밍마우스", "블루투스스피커",
+
+# (검색 키워드, 가격 하한) — 카테고리마다 시세가 달라 하한을 다르게 둔다.
+CATEGORY_KEYWORDS = [
+    # 전자제품 (기존)
+    ("노트북", 300_000), ("태블릿", 300_000), ("무선이어폰", 300_000),
+    ("스마트워치", 300_000), ("모니터", 300_000), ("커피머신", 300_000),
+    ("로봇청소기", 300_000), ("공기청정기", 300_000), ("게이밍마우스", 300_000),
+    ("블루투스스피커", 300_000),
+    # 가전/가구 (2026-08-29 추가, 원래 단가가 전자제품보다 낮아 하한 낮춤)
+    ("에어프라이어", 100_000), ("인덕션레인지", 100_000), ("식기세척기", 300_000),
+    ("매트리스", 200_000), ("러닝머신", 200_000), ("안마의자", 300_000),
+    # 뷰티/생활용품 (2026-08-29 추가, 저가 카테고리라 하한 대폭 낮춤)
+    ("화장품세트", 30_000), ("다이어트보조제", 30_000), ("샴푸세트", 20_000),
+    ("청소용품세트", 20_000), ("주방수납용품", 20_000), ("캠핑용품세트", 50_000),
 ]
-MIN_PRICE = 300_000
 
 HERE = Path(__file__).resolve().parent
 USED_PATH = HERE.parent / "used_products.json"
@@ -119,10 +134,10 @@ def main():
     used_ids = {u["productId"] for u in used}
     recent_signatures = {_signature(u["productName"]) for u in used[-RECENT_SIMILARITY_WINDOW:]}
 
-    keywords = KEYWORDS[:]
-    random.shuffle(keywords)
+    category_keywords = CATEGORY_KEYWORDS[:]
+    random.shuffle(category_keywords)
 
-    for kw in keywords:
+    for kw, min_price in category_keywords:
         try:
             result = search(kw, limit=10)
         except Exception as e:
@@ -130,7 +145,7 @@ def main():
             continue
         candidates = [
             item for item in result.get("data", {}).get("productData", [])
-            if item["productPrice"] >= MIN_PRICE
+            if item["productPrice"] >= min_price
             and item["productId"] not in used_ids
             and item.get("isRocket") is True
             and _signature(item["productName"]) not in recent_signatures
