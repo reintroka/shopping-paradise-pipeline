@@ -48,6 +48,25 @@ def run(cmd, **kw):
     return subprocess.run(cmd, check=True, **kw)
 
 
+def run_captured(cmd):
+    """soft_step으로 감싸는 부가 스텝(X 포스트, 유튜브 댓글)에서만 쓴다.
+
+    2026-08-30: run()은 stdout/stderr를 캡처하지 않아서, 실패 시 soft_step_results에
+    쌓이는 메시지가 "Command '[...]' returned non-zero exit status 1." 뿐이었다 —
+    post_x.py가 실제 X API 에러 바디(403/401 사유 등)를 stdout에 자세히 찍어줘도
+    CalledProcessError.__str__()엔 안 담기니 텔레그램 알림에도, 여기서도 진짜 원인이
+    한 번도 보이지 않았다(트위터 실패가 반복돼도 원인을 특정 못 하던 문제의 근본 원인).
+    출력을 캡처해 실패 시 예외 메시지에 꼬리 부분을 포함시킨다."""
+    print("+", " ".join(cmd))
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    output = (result.stdout or "") + (result.stderr or "")
+    if output:
+        print(output, end="" if output.endswith("\n") else "\n")
+    if result.returncode != 0:
+        raise RuntimeError(f"exit {result.returncode}: {output[-1500:].strip()}")
+    return result
+
+
 def push_with_retry(repo_root: Path, max_tries: int = 3) -> None:
     """2026-08-28: 처음엔 female-noon/male-evening 두 루틴의 non-fast-forward 경합이라고
     추측하고 단순 `git push` 재시도로 고쳤었는데, 실제 클라우드 루틴 실행 로그
@@ -173,7 +192,7 @@ def main():
     uploaded_video_url = video_info["url"]
 
     # 8. X 포스트 (부가) — 2026-08-27: 쿠팡 상품 이미지 첨부 추가
-    soft_step("X 포스트", lambda: run([
+    soft_step("X 포스트", lambda: run_captured([
         "python3", str(HERE / "post_x.py"),
         "--text", script_data["x_post"], "--image", str(product_image_path),
     ]))
@@ -182,7 +201,7 @@ def main():
     comment_text = (
         f"영상에서 소개한 {product['productName'][:20]}, 여기서 바로 확인하세요 \U0001F449 {coupang_url}"
     )
-    soft_step("유튜브 댓글", lambda: run([
+    soft_step("유튜브 댓글", lambda: run_captured([
         "python3", str(HERE / "post_comment.py"),
         "--video-id", video_id, "--text", comment_text,
     ]))
