@@ -218,7 +218,7 @@ def build_middle_segment(work_dir: Path, durs, starts, ends, total_dur: float) -
     out_path = work_dir / "middle_segment.mp4"
     cmd += ["-filter_complex_script", str(filter_path),
             "-map", "[vout]", "-map", f"{audio_idx}:a",
-            "-t", f"{total_dur:.2f}", "-r", "25", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-t", f"{total_dur:.2f}", "-r", "25", "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k", str(out_path)]
     run(cmd)
     return out_path
@@ -244,7 +244,7 @@ def build_hook_segment(work_dir: Path) -> Path:
            "-loop", "1", "-i", str(work_dir / "caption_hook.png"),
            "-filter_complex_script", str(filter_path),
            "-map", "[vout]", "-map", "[aout]",
-           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(out_path)]
+           "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(out_path)]
     run(cmd)
     return out_path
 
@@ -277,7 +277,7 @@ def build_cta_segment(work_dir: Path) -> Path:
            "-loop", "1", "-i", str(work_dir / "cta_button.png"),
            "-filter_complex_script", str(filter_path),
            "-map", "[vout]", "-map", "[aout]",
-           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(out_path)]
+           "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(out_path)]
     run(cmd)
     return out_path
 
@@ -303,7 +303,7 @@ def assemble(work_dir: Path, out_path: Path):
          "-i", str(hook_path), "-i", str(middle_path), "-i", str(cta_path),
          "-filter_complex", filter_txt,
          "-map", "[vout]", "-map", "[aout]",
-         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+         "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
          str(out_path)])
     print(f"[assemble_video] 최종 영상 완료: {out_path}")
 
