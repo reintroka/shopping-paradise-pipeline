@@ -119,6 +119,14 @@ def save_used(used):
 # 두 단어(보통 브랜드+제품라인)를 시그니처로 뽑아 최근 목록과 겹치면 건너뛴다.
 RECENT_SIMILARITY_WINDOW = 20
 
+# 2026-08-30: 위 상품명 시그니처만으로는 "필립스 2200 에스프레소"(8/29) 다음에
+# "필립스 1200 에스프레소"(8/30)처럼 모델 번호만 다른 같은 브랜드+카테고리 상품이
+# 연달아 나오는 걸 못 막았다(첫 두 단어가 "필립스 2200"/"필립스 1200"으로 서로
+# 달라서 시그니처가 겹치지 않았음) — 사용자가 "비슷한 제품이 계속 나온다" 지적으로
+# 발견. 카테고리(검색 키워드) 자체를 최근 사용 이력에서 추적해서, 최근에 이미 쓴
+# 카테고리는 이번 선정 후보에서 아예 제외해 다른 카테고리로 강제 순환시킨다.
+RECENT_KEYWORD_WINDOW = 8
+
 
 def _signature(product_name: str) -> str:
     tokens = product_name.replace(",", " ").split()
@@ -133,8 +141,13 @@ def main():
     used = load_used()
     used_ids = {u["productId"] for u in used}
     recent_signatures = {_signature(u["productName"]) for u in used[-RECENT_SIMILARITY_WINDOW:]}
+    recent_keywords = {u["keyword"] for u in used[-RECENT_KEYWORD_WINDOW:] if u.get("keyword")}
 
-    category_keywords = CATEGORY_KEYWORDS[:]
+    category_keywords = [kw for kw in CATEGORY_KEYWORDS if kw[0] not in recent_keywords]
+    if not category_keywords:
+        # 카테고리 수(16개)보다 윈도우가 커서 전부 걸러졌으면(설정 실수 등) 순환이
+        # 막히므로, 이번만 필터 없이 전체 카테고리로 진행한다.
+        category_keywords = CATEGORY_KEYWORDS[:]
     random.shuffle(category_keywords)
 
     for kw, min_price in category_keywords:
@@ -162,6 +175,7 @@ def main():
             used.append({
                 "productId": chosen["productId"],
                 "productName": chosen["productName"],
+                "keyword": kw,
                 "used_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             })
             save_used(used)
