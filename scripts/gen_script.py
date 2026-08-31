@@ -20,11 +20,28 @@
 import argparse
 import json
 import os
+import random
 import urllib.request
 from pathlib import Path
 
 X_POST_HISTORY_PATH = Path(__file__).resolve().parent.parent / "x_post_history.json"
 X_POST_HISTORY_MAX = 12
+
+# 2026-08-31: 저사양 모델(gemini-flash-lite-latest)이 "CTA 문구를 매번 다르게
+# 써라" 같은 느슨한 지침을 잘 안 따르고 거의 매번 "지금 프로필에서 바로 확인
+# 가능해요" 류의 동일한 CTA를 반복해서(+ 고정된 해시태그 개수) X가 스팸/중복
+# 콘텐츠로 판단, 게시 403을 낸 사례가 있었다. LLM의 자율적 다양성에 맡기지 않고
+# 파이썬이 결정론적으로 CTA 문구/해시태그 개수를 뽑아 프롬프트에 강제 주입한다.
+CTA_PHRASES = [
+    "프로필 링크에서 바로 확인하세요.",
+    "지금 프로필 클릭 한 번이면 끝!",
+    "더 궁금하면 프로필 들러보세요~",
+    "놓치지 마시고 프로필에서 확인하세요!",
+    "자세한 내용은 프로필 링크를 참고해주세요.",
+    "지금 프로필 가서 득템하세요.",
+    "관심 있으면 프로필 확인 필수예요!",
+    "프로필에 다 있어요, 구경 가보세요.",
+]
 
 PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 쇼츠 채널(쿠팡파트너스 제품 추천)의 카피라이터입니다.
 아래 상품 정보를 보고 45초짜리 숏츠 대본을 JSON으로 만드세요.
@@ -59,16 +76,18 @@ PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 쇼츠 채널(쿠팡�
 - youtube_title: SEO 제목 60자 이내, 후킹있게
 - youtube_description_intro: 설명란 맨 위에 들어갈 1~2문장 (링크/고지문은 별도로 붙임)
 - x_post: X(트위터) 홍보 문구. 140~220자 분량으로 충분히 길게 써서 훅 문장 + 핵심 셀링포인트
-  2~3개(가격/스펙 등 구체적으로) + "프로필 링크에서 확인하세요" 같은 유도 문구 + 관련
-  해시태그 2~3개까지 포함할 것 (X 게시글 글자수 한도는 280자). 너무 짧고 밋밋한 한 줄짜리
-  문구 금지. 링크 URL 자체는 절대 넣지 말 것(프로필 바이오 링크로 유도).
+  2~3개(가격/스펙 등 구체적으로) + 유도 문구(CTA) + 해시태그를 포함할 것 (X 게시글
+  글자수 한도는 280자). 너무 짧고 밋밋한 한 줄짜리 문구 금지. 링크 URL 자체는 절대
+  넣지 말 것(프로필 바이오 링크로 유도).
+  **이번 CTA 문구는 절대 새로 짓지 말고, 아래 문구를 토씨 하나 바꾸지 말고 그대로
+  x_post의 마지막 문장으로 포함시킬 것: "{cta_phrase}"**
+  **해시태그는 정확히 {hashtag_count}개만 쓸 것 (더 많거나 적게 쓰지 말 것).**
   **X가 반복되는 문장 구조를 스팸/중복 콘텐츠로 판단해 게시를 거부하는 사례가 있었음
   (2026-08-28) — 아래 [최근 X 포스트]와 겹치지 않도록 반드시 다음을 매번 바꿀 것:**
   1) 첫 문장의 문형(예: 매번 "~하셨죠?"로 시작하는 질문형 반복 금지 — 감탄사로 시작,
-     상황 묘사로 시작, 숫자/가격으로 시작 등 다양하게), 2) 유도 문구 표현("프로필
-     링크에서 확인하세요" 외에도 "프로필에서 바로 확인 가능해요", "지금 프로필 클릭!"
-     등으로 매번 다르게), 3) 해시태그 구성과 순서(#쇼핑의천국을 항상 맨 끝 고정 위치에
-     기계적으로 반복하지 말고, 상품 관련 태그 2개 + 브랜드 태그 조합 순서를 매번 바꿀 것).
+     상황 묘사로 시작, 숫자/가격으로 시작 등 다양하게), 2) 해시태그 구성과 순서
+     (#쇼핑의천국을 항상 맨 끝 고정 위치에 기계적으로 반복하지 말고, 상품 관련 태그와
+     브랜드 태그의 조합 순서를 매번 바꿀 것).
 
 [최근 X 포스트 (이 구조/표현과 겹치지 않게 새로 쓸 것, 없으면 빈 목록)]
 {recent_x_posts}
@@ -121,11 +140,15 @@ def main():
     product = json.loads(open(args.product_json, encoding="utf-8").read())
     history = load_x_post_history()
     recent_x_posts = "\n".join(f"- {h}" for h in history[-5:]) or "(없음)"
+    cta_phrase = random.choice(CTA_PHRASES)
+    hashtag_count = random.choice([1, 2, 3])
     prompt = PROMPT_TEMPLATE.format(
         product_name=product["productName"],
         price=f"{product['productPrice']:,}원",
         keyword=product.get("keyword", ""),
         recent_x_posts=recent_x_posts,
+        cta_phrase=cta_phrase,
+        hashtag_count=hashtag_count,
     )
     text = call_gemini(prompt)
     data = parse_json_response(text)

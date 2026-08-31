@@ -21,6 +21,7 @@ import hmac
 import json
 import os
 import random
+import re
 import string
 import time
 import urllib.error
@@ -166,6 +167,19 @@ def post_tweet(text: str, media_id: str = None) -> dict:
 VARIATIONS = ["🛍️", "✨", "👍", "🔥", "📦"]
 
 
+def _strip_hashtags(text: str) -> str:
+    """텍스트 중간/끝의 '#단어' 해시태그를 전부 제거."""
+    return re.sub(r"(?<!\S)#\S+", "", text).strip()
+
+
+def _strip_last_sentence(text: str) -> str:
+    """마지막 문장(대부분 CTA 문장)을 제거. 문장이 하나뿐이면 원본 유지."""
+    sentences = [s for s in re.split(r"(?<=[.!?~])\s+", text.strip()) if s]
+    if len(sentences) <= 1:
+        return text.strip()
+    return " ".join(sentences[:-1]).strip()
+
+
 def _http_error_with_body(e: urllib.error.HTTPError) -> RuntimeError:
     """2026-08-28: 실제 프로덕션 실행(제품 이미지+생성된 문구)에서 403이 계속
     났는데, 그동안 str(HTTPError)가 "HTTP Error 403: Forbidden"만 보여주고
@@ -179,10 +193,21 @@ def _http_error_with_body(e: urllib.error.HTTPError) -> RuntimeError:
 
 
 def post_tweet_with_retry(text: str, media_id: str = None, max_tries: int = 2) -> dict:
-    """403은 대부분 중복 콘텐츠 거부로 추정됨 — 문구를 살짝 바꿔서 1회 재시도."""
+    """403은 대부분 중복 콘텐츠 거부로 추정됨 — 재시도 시 문구를 변형한다.
+
+    2026-08-31: 기존에는 문구 끝에 이모지 하나만 붙여서 재시도했는데, 이러면
+    해시태그+CTA로 굳어진 문장 구조 자체는 그대로라 재시도해도 다시 403이 나는
+    사례가 있었다(진단 결과 계정/토큰/이미지는 정상 — 순수 문구 구조 문제로 확인).
+    재시도부터는 해시태그를 전부 제거하고 마지막 문장(대부분 CTA 문장)까지 제거해
+    구조 자체를 바꾼 뒤, 기존 이모지 변주도 함께 붙인다.
+    """
     last_err = None
     for i in range(max_tries):
-        attempt_text = text if i == 0 else f"{text} {random.choice(VARIATIONS)}"
+        if i == 0:
+            attempt_text = text
+        else:
+            stripped = _strip_last_sentence(_strip_hashtags(text))
+            attempt_text = f"{stripped or text} {random.choice(VARIATIONS)}"
         try:
             return post_tweet(attempt_text, media_id)
         except urllib.error.HTTPError as e:
