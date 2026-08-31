@@ -4,9 +4,12 @@
   - IG_USER_ID: shoppingparadise.kr의 Instagram 비즈니스 계정 ID (graph.instagram.com/me로 확인)
   - IG_ACCESS_TOKEN: instagram_business_content_publish 권한이 있는 장기(long-lived, IGAA로
     시작) 토큰 — shopping-paradise-secrets 저장소에 아직 토큰 파일이 없을 때만 쓰이는
-    최초 시드값. 이후로는 매 실행마다 그 저장소의 값을 읽고, 24시간 이상 지났으면 자동
-    갱신해서 다시 저장한다(2026-09-01, "만료 없이 되도록" 요청으로 도입) — 사람이 60일마다
-    수동으로 토큰을 갱신할 필요가 없어짐.
+    최초 시드값. 이후로는 매 실행마다 그 저장소의 값을 읽고, REFRESH_MIN_AGE_HOURS(기본
+    30일)만큼 지났으면 자동 갱신해서 다시 저장한다(2026-09-01, "만료 없이 되도록" 요청으로
+    도입) — 사람이 60일마다 수동으로 토큰을 갱신할 필요가 없어짐. Meta 정책상 최소 24시간만
+    지나면 갱신 가능하지만, 60일 유효기간 대비 매일 갱신할 이유가 없어서(불필요한 API
+    호출+시크릿 저장소 push만 늘어남) 30일로 여유있게 잡음 — 60일 만료 전에 최소 한 번은
+    반드시 갱신되도록 절반보다 짧게.
 
 **중요**: "Instagram API with Instagram Login" 토큰(IGAA 접두사)은 graph.facebook.com이
 아니라 graph.instagram.com을 써야 한다 — 처음에 graph.facebook.com으로 짰다가 토큰 타입
@@ -41,7 +44,11 @@ MEDIA_REPO_URL = "https://github.com/reintroka/shopping-paradise-media.git"
 MEDIA_PAGES_BASE = "https://reintroka.github.io/shopping-paradise-media"
 MEDIA_FILENAME = "reel.mp4"  # 매번 같은 파일명을 덮어써서 저장소 크기를 일정하게 유지
 TOKEN_FILE = "instagram_token.json"
-REFRESH_MIN_AGE_HOURS = 24  # Meta 정책: 발급/직전 갱신 후 24시간 이상 지나야 재갱신 가능
+# Meta 정책상 최소 24시간이면 재갱신 가능하지만, 토큰 자체가 60일 유효라 그렇게 자주
+# 갱신할 필요가 없다 — 30일로 잡아서 매 실행마다 API 호출+시크릿 저장소 push가 늘어나는
+# 것을 막으면서도 60일 만료 전에는 항상 갱신되도록 함(2026-09-01, 사용자 피드백 반영).
+REFRESH_MIN_AGE_DAYS = 30
+REFRESH_MIN_AGE_HOURS = REFRESH_MIN_AGE_DAYS * 24
 
 
 def _http_error_with_body(e: urllib.error.HTTPError) -> RuntimeError:
