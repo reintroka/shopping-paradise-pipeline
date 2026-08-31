@@ -24,23 +24,35 @@ python3 scripts/run_pipeline.py --character male    # 민준 (저녁 7시)
 Google Cloud Console에서 프로젝트 생성(또는 기존 프로젝트 사용) → "Cloud
 Text-to-Speech API" 활성화 → 그 API로 제한(restrict)한 API 키 발급.
 
-**2026-09-01 추가 (인스타/틱톡)** — 아직 미등록, 계정 연결 전까지는 두 스텝 다
-soft_step 실패로 로그만 남고 파이프라인 자체는 정상 진행됨:
+**2026-09-01 추가 (인스타/틱톡)**:
 
-- `IG_USER_ID`, `IG_ACCESS_TOKEN`: shoppingparadise.kr 인스타그램 비즈니스/크리에이터
-  계정을 Meta 개발자 앱(Instagram API with Instagram Login, 또는 페이스북 페이지
-  연결 방식)에 연결해서 발급받는 장기 액세스 토큰. `instagram_business_content_publish`
-  권한 필요. 영상은 `scripts/post_instagram.py`가 `reintroka/shopping-paradise-media`
-  (GitHub Pages)에 임시로 올려서 공개 URL로 넘긴다(Graph API가 로컬 파일 직접
-  업로드를 지원하지 않고 video_url만 받으므로).
+- `IG_USER_ID`: shoppingparadise.kr의 Instagram 사용자 ID(`graph.instagram.com/me`
+  기준, 2026-09-01 확인값 `28124947437116059`).
+- `IG_ACCESS_TOKEN`: Meta 개발자 앱 "쇼핑의천국 인스타그램 자동글쓰기"(Instagram API
+  with Instagram Login, App ID 1676158014013411, Instagram App ID 2137440940539520)
+  에서 발급받은 `instagram_business_content_publish` 포함 장기(long-lived, 60일) 토큰.
+  이건 **최초 부트스트랩 시드값일 뿐** — 실제로는 매 실행마다 `scripts/secrets_store.py`가
+  비공개 저장소 `reintroka/shopping-paradise-secrets`의 `instagram_token.json`을
+  읽고, 24시간 이상 지났으면 `graph.instagram.com/refresh_access_token`으로 자동
+  갱신해서 다시 저장한다(사람이 60일마다 손으로 갱신할 필요 없음). 영상은
+  `scripts/post_instagram.py`가 `reintroka/shopping-paradise-media`(GitHub Pages)에
+  임시로 올려서 공개 URL로 넘긴다(Graph API가 로컬 파일 직접 업로드를 지원하지 않고
+  video_url만 받으므로).
 - `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REFRESH_TOKEN`: TikTok
-  개발자 앱(Content Posting API, `video.upload` scope)으로 shoppingparadise.kr
-  계정을 OAuth 승인해서 발급받는 리프레시 토큰. 앱이 심사(audit)를 통과하기 전이라
-  `video.publish`(바로 공개 발행) 권한은 못 쓰고, 대신 "Post to inbox" 방식으로
-  영상을 계정의 틱톡 앱 받은편지함에 초안으로 전달만 한다 — 계정 소유자가 앱
-  알림에서 직접 "게시"를 눌러야 최종 발행됨. `post_tiktok.py`는 매 실행마다 리프레시
-  토큰이 회전(rotate)되므로 응답의 `new_refresh_token`을 다음 실행 전에 환경변수에
-  반영해야 한다(현재는 수동 갱신 — 자동 갱신은 다음 개선 여지).
+  개발자 앱 "쇼핑의천국 틱톡 자동발행"(App ID 7680193905014786066, Sandbox "main",
+  target user `shoppingparadise_kr`)에서 발급받은 리프레시 토큰. 앱이 심사(audit)를
+  통과하기 전이라 `video.publish`(바로 공개 발행) 권한은 못 쓰고, 대신 "Post to
+  inbox" 방식으로 영상을 계정의 틱톡 앱 받은편지함에 초안으로 전달만 한다 — 계정
+  소유자가 앱 알림에서 직접 "게시"를 눌러야 최종 발행됨. `TIKTOK_REFRESH_TOKEN`도
+  마찬가지로 최초 시드값일 뿐 — 매 실행마다 회전(rotate)되는 새 리프레시 토큰을
+  `secrets_store.py`가 같은 `shopping-paradise-secrets`의 `tiktok_token.json`에
+  자동 반영한다.
+
+**왜 별도 비공개 저장소가 필요한가**: 이 저장소(shopping-paradise-pipeline)는
+public이라 토큰을 여기 커밋하면 그대로 노출된다. `shopping-paradise-secrets`는
+private repo로 따로 만들어서 자동 갱신되는 토큰 상태만 보관한다(클라우드 환경의
+git 자격증명이 같은 계정 소유의 private repo에도 push 권한이 있다는 전제 —
+안 되면 `secrets_store.py`의 clone/push가 실패하고 soft_step 로그에 남는다).
 
 ## 구조
 
@@ -67,6 +79,9 @@ soft_step 실패로 로그만 남고 파이프라인 자체는 정상 진행됨:
   2026-09-01 추가)
 - `scripts/post_tiktok.py` — 틱톡 받은편지함(초안) 전달 (앱 심사 전이라 자동 공개
   발행 불가, 2026-09-01 추가)
+- `scripts/secrets_store.py` — 비공개 저장소(`shopping-paradise-secrets`)에서 자동
+  갱신 토큰(인스타/틱톡)을 읽고 쓰는 공용 헬퍼 (2026-09-01 추가, public 저장소에
+  시크릿을 커밋하지 않기 위함)
 - `scripts/post_comment.py` — 영상 공개 확인 후 댓글 홍보 (재시도 포함)
 - `scripts/update_link_page.py` — 부업실험실 링크 페이지에 상품 카드 추가
 - `scripts/shorts_log.py` — 발행 이력 기록(`shorts_log.json`), 롱폼 컴파일 판단용

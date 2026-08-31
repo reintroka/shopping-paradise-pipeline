@@ -9,18 +9,26 @@
 캡션은 이 스텝에서 API로 지정할 수 없다(inbox 방식 자체의 제약 — 필요하면 알림/로그에
 캡션 문구를 같이 남겨서 사람이 붙여넣게 한다).
 
-리프레시 토큰은 응답에서 매번 새 값으로 회전(rotate)되므로, 다음 실행을 위해
-새 refresh_token을 state 파일에 남긴다(호출부에서 이 값을 다음 환경변수로 갱신해야 함).
+리프레시 토큰은 응답에서 매번 새 값으로 회전(rotate)된다 — 예전 값은 그 즉시 무효가
+되므로, 환경변수(TIKTOK_REFRESH_TOKEN)를 매번 손으로 갱신하는 대신 shopping-paradise-secrets
+(비공개 저장소)에 최신 값을 저장/조회한다(2026-09-01, "만료 없이 되도록" 요청으로 도입).
+shopping-paradise-pipeline 저장소 자체는 public이라 토큰을 절대 거기 커밋하면 안 됨.
+환경변수는 secrets 저장소에 아직 파일이 없을 때만 쓰이는 최초 시드값이다.
 """
 import argparse
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import secrets_store  # noqa: E402
+
+TOKEN_FILE = "tiktok_token.json"
 TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 INBOX_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
 STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
@@ -36,11 +44,17 @@ def _http_error_with_body(e: urllib.error.HTTPError) -> RuntimeError:
 
 
 def refresh_access_token() -> dict:
+    """secrets 저장소의 최신 refresh_token으로 access_token을 발급받고, 응답에 담긴
+    새로 회전된 refresh_token을 즉시 secrets 저장소에 반영한다(다음 실행이 옛 값으로
+    실패하지 않도록)."""
+    state = secrets_store.load(TOKEN_FILE, bootstrap={
+        "refresh_token": os.environ["TIKTOK_REFRESH_TOKEN"],
+    })
     body = urllib.parse.urlencode({
         "client_key": os.environ["TIKTOK_CLIENT_KEY"],
         "client_secret": os.environ["TIKTOK_CLIENT_SECRET"],
         "grant_type": "refresh_token",
-        "refresh_token": os.environ["TIKTOK_REFRESH_TOKEN"],
+        "refresh_token": state["refresh_token"],
     }).encode("utf-8")
     req = urllib.request.Request(
         TOKEN_URL, data=body,
@@ -53,6 +67,8 @@ def refresh_access_token() -> dict:
         raise _http_error_with_body(e) from None
     if "access_token" not in data:
         raise RuntimeError(f"토큰 갱신 실패: {data}")
+    if data.get("refresh_token"):
+        secrets_store.save(TOKEN_FILE, {"refresh_token": data["refresh_token"]})
     return data
 
 
@@ -150,7 +166,6 @@ def main():
     result = {
         "publish_id": init_data["publish_id"],
         "status": status,
-        "new_refresh_token": token_data.get("refresh_token"),  # 회전된 리프레시 토큰 — 다음 실행 전 환경변수 갱신 필요
         "caption_hint": args.caption_hint,
     }
     Path(args.out).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

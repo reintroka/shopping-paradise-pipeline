@@ -1,8 +1,16 @@
-"""shoppingparadise.kr 인스타그램에 Reels로 발행 (Instagram Graph API).
+"""shoppingparadise.kr 인스타그램에 Reels로 발행 (Instagram API with Instagram Login).
 
 환경변수: IG_USER_ID, IG_ACCESS_TOKEN
-  - IG_USER_ID: shoppingparadise.kr의 Instagram 비즈니스/크리에이터 계정 ID
-  - IG_ACCESS_TOKEN: instagram_business_content_publish 권한이 있는 장기(long-lived) 토큰
+  - IG_USER_ID: shoppingparadise.kr의 Instagram 비즈니스 계정 ID (graph.instagram.com/me로 확인)
+  - IG_ACCESS_TOKEN: instagram_business_content_publish 권한이 있는 장기(long-lived, IGAA로
+    시작) 토큰 — shopping-paradise-secrets 저장소에 아직 토큰 파일이 없을 때만 쓰이는
+    최초 시드값. 이후로는 매 실행마다 그 저장소의 값을 읽고, 24시간 이상 지났으면 자동
+    갱신해서 다시 저장한다(2026-09-01, "만료 없이 되도록" 요청으로 도입) — 사람이 60일마다
+    수동으로 토큰을 갱신할 필요가 없어짐.
+
+**중요**: "Instagram API with Instagram Login" 토큰(IGAA 접두사)은 graph.facebook.com이
+아니라 graph.instagram.com을 써야 한다 — 처음에 graph.facebook.com으로 짰다가 토큰 타입
+불일치로 전부 실패했을 것(실제 curl 테스트로 확인, graph.instagram.com/me만 정상 동작).
 
 Graph API의 Reels 발행(POST /{ig-user-id}/media, media_type=REELS)은 로컬 파일을
 직접 업로드하는 방식이 아니라 "video_url"로 공개 URL을 넘겨주면 인스타그램 서버가
@@ -15,18 +23,25 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import secrets_store  # noqa: E402
+
 GRAPH_API_VERSION = "v21.0"
-GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
+GRAPH_BASE = f"https://graph.instagram.com/{GRAPH_API_VERSION}"
 MEDIA_REPO_URL = "https://github.com/reintroka/shopping-paradise-media.git"
 MEDIA_PAGES_BASE = "https://reintroka.github.io/shopping-paradise-media"
 MEDIA_FILENAME = "reel.mp4"  # 매번 같은 파일명을 덮어써서 저장소 크기를 일정하게 유지
+TOKEN_FILE = "instagram_token.json"
+REFRESH_MIN_AGE_HOURS = 24  # Meta 정책: 발급/직전 갱신 후 24시간 이상 지나야 재갱신 가능
 
 
 def _http_error_with_body(e: urllib.error.HTTPError) -> RuntimeError:
@@ -97,6 +112,49 @@ def wait_until_reachable(url: str, timeout_secs: int = 180) -> None:
     raise RuntimeError(f"GitHub Pages 영상 URL이 {timeout_secs}초 내에 응답하지 않음: {last_err}")
 
 
+def refresh_long_lived_token(access_token: str) -> dict:
+    return _get("https://graph.instagram.com/refresh_access_token", {
+        "grant_type": "ig_refresh_token", "access_token": access_token,
+    })
+
+
+def get_valid_access_token() -> str:
+    """secrets 저장소에서 현재 토큰을 읽고, 24시간 이상 지났으면 갱신 후 다시 저장한다.
+
+    갱신 실패(24시간이 안 지났거나 일시적 오류)는 치명적 에러로 취급하지 않고 기존 토큰을
+    그대로 쓴다 — 다음 실행에서 다시 시도하면 되므로, 발행 자체가 막히면 안 된다.
+    """
+    state = secrets_store.load(TOKEN_FILE, bootstrap={
+        "access_token": os.environ["IG_ACCESS_TOKEN"], "obtained_at": None,
+    })
+    access_token = state["access_token"]
+    obtained_at = state.get("obtained_at")
+
+    if obtained_at is None:
+        # 처음 보는 토큰(부트스트랩 직후) — 나이를 몰라서 갱신 시도는 안 하고, 지금
+        # 시각을 기준으로 기록만 남겨서 다음 실행부터 24시간 계산이 가능하게 한다.
+        state["obtained_at"] = datetime.now(timezone.utc).isoformat()
+        secrets_store.save(TOKEN_FILE, state)
+        return access_token
+
+    age_hours = (datetime.now(timezone.utc) - datetime.fromisoformat(obtained_at)).total_seconds() / 3600
+    if age_hours < REFRESH_MIN_AGE_HOURS:
+        return access_token
+
+    try:
+        result = refresh_long_lived_token(access_token)
+        new_token = result["access_token"]
+    except Exception as e:
+        print(f"[post_instagram] 토큰 갱신 실패(기존 토큰으로 계속 진행): {e}")
+        return access_token
+
+    state["access_token"] = new_token
+    state["obtained_at"] = datetime.now(timezone.utc).isoformat()
+    secrets_store.save(TOKEN_FILE, state)
+    print("[post_instagram] 액세스 토큰 자동 갱신 완료")
+    return new_token
+
+
 def create_reels_container(ig_user_id: str, access_token: str, video_url: str, caption: str) -> str:
     result = _post(
         f"{GRAPH_BASE}/{ig_user_id}/media",
@@ -141,7 +199,7 @@ def main():
     args = p.parse_args()
 
     ig_user_id = os.environ["IG_USER_ID"]
-    access_token = os.environ["IG_ACCESS_TOKEN"]
+    access_token = get_valid_access_token()
 
     video_url = publish_to_temp_host(Path(args.video))
     print(f"[post_instagram] 임시 호스팅 완료: {video_url}")
