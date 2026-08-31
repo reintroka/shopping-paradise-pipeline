@@ -24,6 +24,24 @@ python3 scripts/run_pipeline.py --character male    # 민준 (저녁 7시)
 Google Cloud Console에서 프로젝트 생성(또는 기존 프로젝트 사용) → "Cloud
 Text-to-Speech API" 활성화 → 그 API로 제한(restrict)한 API 키 발급.
 
+**2026-09-01 추가 (인스타/틱톡)** — 아직 미등록, 계정 연결 전까지는 두 스텝 다
+soft_step 실패로 로그만 남고 파이프라인 자체는 정상 진행됨:
+
+- `IG_USER_ID`, `IG_ACCESS_TOKEN`: shoppingparadise.kr 인스타그램 비즈니스/크리에이터
+  계정을 Meta 개발자 앱(Instagram API with Instagram Login, 또는 페이스북 페이지
+  연결 방식)에 연결해서 발급받는 장기 액세스 토큰. `instagram_business_content_publish`
+  권한 필요. 영상은 `scripts/post_instagram.py`가 `reintroka/shopping-paradise-media`
+  (GitHub Pages)에 임시로 올려서 공개 URL로 넘긴다(Graph API가 로컬 파일 직접
+  업로드를 지원하지 않고 video_url만 받으므로).
+- `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REFRESH_TOKEN`: TikTok
+  개발자 앱(Content Posting API, `video.upload` scope)으로 shoppingparadise.kr
+  계정을 OAuth 승인해서 발급받는 리프레시 토큰. 앱이 심사(audit)를 통과하기 전이라
+  `video.publish`(바로 공개 발행) 권한은 못 쓰고, 대신 "Post to inbox" 방식으로
+  영상을 계정의 틱톡 앱 받은편지함에 초안으로 전달만 한다 — 계정 소유자가 앱
+  알림에서 직접 "게시"를 눌러야 최종 발행됨. `post_tiktok.py`는 매 실행마다 리프레시
+  토큰이 회전(rotate)되므로 응답의 `new_refresh_token`을 다음 실행 전에 환경변수에
+  반영해야 한다(현재는 수동 갱신 — 자동 갱신은 다음 개선 여지).
+
 ## 구조
 
 - `assets/characters/{female,male}/` — 캐릭터 레퍼런스 이미지 28장씩
@@ -45,6 +63,10 @@ Text-to-Speech API" 활성화 → 그 API로 제한(restrict)한 API 키 발급.
 - `scripts/assemble_video.py` — ffmpeg 최종 조립
 - `scripts/upload_youtube.py` — 공개 업로드 (채널 ID 검증 포함)
 - `scripts/post_x.py` — X 포스트 (링크 없이, 프로필 바이오 링크 유도)
+- `scripts/post_instagram.py` — 인스타그램 Reels 발행 (GitHub Pages 임시 호스팅 경유,
+  2026-09-01 추가)
+- `scripts/post_tiktok.py` — 틱톡 받은편지함(초안) 전달 (앱 심사 전이라 자동 공개
+  발행 불가, 2026-09-01 추가)
 - `scripts/post_comment.py` — 영상 공개 확인 후 댓글 홍보 (재시도 포함)
 - `scripts/update_link_page.py` — 부업실험실 링크 페이지에 상품 카드 추가
 - `scripts/shorts_log.py` — 발행 이력 기록(`shorts_log.json`), 롱폼 컴파일 판단용

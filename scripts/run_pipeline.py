@@ -12,6 +12,9 @@
   6. ffmpeg 최종 조립 (assemble_video)
   7. 유튜브 공개 업로드 (upload_youtube) — 실패하면 중단(핵심 산출물)
   8. X 포스트 (post_x, 상품 이미지 첨부 + 403 시 문구 변형 1회 재시도) — 실패해도 계속 진행(부가 기능)
+  8.5. 인스타그램 Reels 발행 (post_instagram, GitHub Pages 임시 호스팅 경유) — 실패해도 계속 진행
+  8.6. 틱톡 받은편지함(초안) 전달 (post_tiktok, 앱 심사 전이라 자동 공개발행 불가 —
+       사람이 앱에서 최종 게시해야 함) — 실패해도 계속 진행
   9. 유튜브 댓글 홍보 (post_comment, 재시도 포함) — 실패해도 계속 진행
   10. 부업실험실 링크 페이지 업데이트 (update_link_page) — 실패해도 계속 진행
   11. shorts_log.json에 이번 발행 기록 추가
@@ -36,6 +39,8 @@ import google_tts  # noqa: E402
 import assemble_video  # noqa: E402
 import upload_youtube  # noqa: E402
 import post_x  # noqa: E402
+import post_instagram  # noqa: E402
+import post_tiktok  # noqa: E402
 import post_comment  # noqa: E402
 import update_link_page  # noqa: E402
 import shorts_log  # noqa: E402
@@ -195,6 +200,23 @@ def main():
     soft_step("X 포스트", lambda: run_captured([
         "python3", str(HERE / "post_x.py"),
         "--text", script_data["x_post"], "--image", str(product_image_path),
+    ]))
+
+    # 8.5. 인스타그램 Reels 발행 (부가) — IG_USER_ID/IG_ACCESS_TOKEN 미설정 시
+    # post_instagram.py가 KeyError로 죽고 soft_step이 그걸 잡아 로그만 남긴다
+    # (계정 연결 전까지는 파이프라인 전체에 영향 없음).
+    ig_out_path = work_dir / "instagram_result.json"
+    soft_step("인스타그램 Reels", lambda: run_captured([
+        "python3", str(HERE / "post_instagram.py"),
+        "--video", str(final_video), "--caption", script_data["x_post"], "--out", str(ig_out_path),
+    ]))
+
+    # 8.6. 틱톡 받은편지함(초안) 전달 (부가) — 앱 심사 전이라 API로 바로 공개
+    # 발행은 불가, 계정 소유자가 틱톡 앱 알림에서 직접 게시해야 최종 발행됨.
+    tiktok_out_path = work_dir / "tiktok_result.json"
+    soft_step("틱톡 초안 전달", lambda: run_captured([
+        "python3", str(HERE / "post_tiktok.py"),
+        "--video", str(final_video), "--caption-hint", script_data["x_post"], "--out", str(tiktok_out_path),
     ]))
 
     # 9. 유튜브 댓글 (부가, 재시도 포함)
