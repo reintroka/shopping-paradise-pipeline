@@ -166,18 +166,97 @@ def post_tweet(text: str, media_id: str = None) -> dict:
 
 VARIATIONS = ["🛍️", "✨", "👍", "🔥", "📦"]
 
+# 2026-09-01: X는 순수 len()이 아니라 twitter-text 가중치 규칙으로 글자수를 센다
+# — 한글/CJK 문자와 대부분의 이모지는 1글자가 아니라 2로 카운트된다(실측: 280자
+# 한도가 한글 기준 실질적으로 약 140자). 처음엔 이걸 모르고 len(text)<=280으로만
+# 잘랐는데, x_post가 전부 한글이라 실제로는 절반 정도 여유만 있는 셈이라 그대로
+# 두면 여전히 X API에서 거부될 위험이 컸다. 아래 _weighted_len이 실제 X 카운팅에
+# 맞춰 계산하고, 안전마진까지 둔 한도(X_SAFE_WEIGHTED_LIMIT)로 자른다.
+X_WEIGHTED_LIMIT = 280
+# 정확히 280에 딱 맞추면 X 쪽 카운팅과 1~2자 오차만 나도 거부될 수 있어서
+# (사용자 지시: "너무 빡빡하게 채워서 잘리지 말고 조금 여유를 줘") 20자 여유를 둔다.
+X_SAFE_WEIGHTED_LIMIT = 260
+
+# 가중치 2인 문자 범위(twitter-text 기준 한글/CJK/가나 블록 + 대부분의 이모지).
+# 이 코드베이스의 실제 입력(한글 문장 + VARIATIONS의 이모지 몇 개)을 정확히
+# 커버하는 걸 목표로 함 — twitter-text 전체 스펙의 100% 재현은 아님.
+_WEIGHT2_RANGES = [
+    (0x1100, 0x11FF),  # 한글 자모
+    (0x3130, 0x318F),  # 한글 호환 자모
+    (0xA960, 0xA97F),  # 한글 자모 확장-A
+    (0xAC00, 0xD7A3),  # 한글 음절
+    (0xD7B0, 0xD7FF),  # 한글 자모 확장-B
+    (0x3000, 0x303F),  # CJK 기호/구두점
+    (0x3040, 0x30FF),  # 히라가나/가타카나
+    (0x4E00, 0x9FFF),  # CJK 통합 한자
+    (0xFF00, 0xFFEF),  # 전각 문자
+    (0x2600, 0x27BF),  # 딩뱃/기타 기호(이모지 상당수 포함)
+    (0x1F300, 0x1FAFF),  # 이모지 주요 블록
+]
+
+
+def _char_weight(ch: str) -> int:
+    cp = ord(ch)
+    for lo, hi in _WEIGHT2_RANGES:
+        if lo <= cp <= hi:
+            return 2
+    return 1
+
+
+def _weighted_len(text: str) -> int:
+    """X(twitter-text) 방식의 가중치 글자수 계산."""
+    return sum(_char_weight(ch) for ch in text)
+
 
 def _strip_hashtags(text: str) -> str:
     """텍스트 중간/끝의 '#단어' 해시태그를 전부 제거."""
     return re.sub(r"(?<!\S)#\S+", "", text).strip()
 
 
-def _strip_last_sentence(text: str) -> str:
-    """마지막 문장(대부분 CTA 문장)을 제거. 문장이 하나뿐이면 원본 유지."""
+def _truncate_preserving_cta(text: str, max_weighted: int = X_SAFE_WEIGHTED_LIMIT) -> str:
+    """X 가중치 글자수 한도 초과 시 본문만 잘라내고 마지막 문장(대부분 프로필
+    링크 유도 CTA, gen_script.py의 cta_phrase)은 항상 보존한다.
+
+    2026-09-01: 기존엔 이 자리에서 마지막 문장을 통째로 "제거"했는데, 그 결과
+    403 재시도가 한 번이라도 걸리면 실제 발행되는 트윗에 "프로필 링크에서
+    확인하세요" 같은 CTA가 아예 빠진 채 올라가고 있었다(사용자가 실발행 결과에서
+    직접 발견: "문구중에 프로필링크를 확인하라는 멘트가 없네"). CTA는 절대
+    제거하지 않고, 길이가 넘칠 때만 본문 쪽을 잘라서 한도 안에 맞춘다. 길이
+    판정은 순수 len()이 아니라 _weighted_len(한글/이모지 2배 가중치)으로 한다.
+    """
+    if _weighted_len(text) <= max_weighted:
+        return text
     sentences = [s for s in re.split(r"(?<=[.!?~])\s+", text.strip()) if s]
     if len(sentences) <= 1:
-        return text.strip()
-    return " ".join(sentences[:-1]).strip()
+        body_chars, total = [], 0
+        for ch in text:
+            w = _char_weight(ch)
+            if total + w > max_weighted:
+                break
+            body_chars.append(ch)
+            total += w
+        return "".join(body_chars).rstrip()
+    cta = sentences[-1]
+    body = " ".join(sentences[:-1])
+    budget = max_weighted - _weighted_len(cta) - _char_weight(" ")  # 본문-CTA 사이 공백 1자
+    if budget <= 0:
+        # CTA 자체가 한도를 넘는 극단적 경우 — CTA만 안전하게 잘라서 반환
+        out, total = [], 0
+        for ch in cta:
+            w = _char_weight(ch)
+            if total + w > max_weighted:
+                break
+            out.append(ch)
+            total += w
+        return "".join(out)
+    body_chars, total = [], 0
+    for ch in body:
+        w = _char_weight(ch)
+        if total + w > budget:
+            break
+        body_chars.append(ch)
+        total += w
+    return f"{''.join(body_chars).rstrip()} {cta}"
 
 
 def _http_error_with_body(e: urllib.error.HTTPError) -> RuntimeError:
@@ -198,16 +277,19 @@ def post_tweet_with_retry(text: str, media_id: str = None, max_tries: int = 2) -
     2026-08-31: 기존에는 문구 끝에 이모지 하나만 붙여서 재시도했는데, 이러면
     해시태그+CTA로 굳어진 문장 구조 자체는 그대로라 재시도해도 다시 403이 나는
     사례가 있었다(진단 결과 계정/토큰/이미지는 정상 — 순수 문구 구조 문제로 확인).
-    재시도부터는 해시태그를 전부 제거하고 마지막 문장(대부분 CTA 문장)까지 제거해
-    구조 자체를 바꾼 뒤, 기존 이모지 변주도 함께 붙인다.
+    재시도부터는 해시태그를 전부 제거하고 이모지 변주를 붙여 구조를 바꾼다.
+
+    2026-09-01: 마지막 문장(CTA) 제거는 빼고 항상 보존한다 — 아래
+    _truncate_preserving_cta 참고. 매 시도마다 280자 한도도 같이 확인해서,
+    변형 후 길어지더라도 CTA는 안 잘리고 본문만 잘려서 발행되게 한다.
     """
     last_err = None
     for i in range(max_tries):
         if i == 0:
-            attempt_text = text
+            attempt_text = _truncate_preserving_cta(text)
         else:
-            stripped = _strip_last_sentence(_strip_hashtags(text))
-            attempt_text = f"{stripped or text} {random.choice(VARIATIONS)}"
+            stripped = _strip_hashtags(text)
+            attempt_text = _truncate_preserving_cta(f"{stripped} {random.choice(VARIATIONS)}")
         try:
             return post_tweet(attempt_text, media_id)
         except urllib.error.HTTPError as e:
