@@ -1,13 +1,27 @@
-"""3일치(하루 2개 x 3일 = 6개) 숏츠가 쌓이면 자동으로 롱폼으로 이어붙여 유튜브에 업로드.
+"""3일치(하루 2개 x 3일 = 6개) 숏츠가 쌓이면 자동으로 롱폼 다이제스트로 제작+업로드.
+
+2026-09-01 개편(v2): 기존엔 6개 숏츠를 하드컷으로 단순히 이어붙이기만 했음(v1).
+사용자 요청으로 다른 13개 채널의 "리캡 롱폼" 패턴(챕터 디바이더+딥다이브 확장
+나레이션+강조자막+인트로/아웃트로 카드)을 이식해 훨씬 풍성하게 재구성했다. 시각
+톤은 새로 만들지 않고 이 채널 숏츠가 이미 쓰고 있는 골드 럭셔리 팔레트
+(build_graphics.py)를 그대로 재사용해 통일감을 유지한다.
 
 - 각 파이프라인 실행(run_pipeline.py) 끝에서 soft_step으로 호출됨 — 6개가 안 쌓였으면
-  아무것도 안 하고 조용히 리턴(매번 호출해도 안전).
+  아무것도 안 하고 조용히 리턴(매번 호출해도 안전). 실패해도 예외가 soft_step에서
+  잡히므로 숏츠 발행 자체는 막지 않는다 — 다음 실행 때 재시도됨(compiled_in 마킹은
+  성공 시에만 저장되므로 안전).
 - 이미 올라간 숏츠를 로컬에 안 남겨두므로(클라우드 실행은 매번 새 샌드박스), 우선
   GCS 백업 버킷(shopping-paradise-daily-raw-luith, upload_youtube.py가 발행 직후
   올려둠)에서 받고, 백업이 없는(백업 도입 이전 발행분) 경우에만 yt-dlp로 유튜브에서
-  다시 내려받는다. 2026-08-29: 클라우드 샌드박스 IP에서 yt-dlp가 유튜브 봇차단
-  ("Sign in to confirm you're not a bot")에 걸리는 걸 다른 채널(명리마스터)에서 실제
-  로그로 확인한 적 있어서, 그 우회책을 그대로 이식.
+  다시 내려받는다.
+- 딥다이브 배경 이미지는 별도로 생성/저장하지 않고, 다운로드한 숏츠 클립 자체에서
+  프레임을 뽑아 재사용한다 — 제품 이미지 URL을 따로 영구 저장할 필요가 없어져서
+  2026-09-01 이전 발행분(specs 없음)에도 동일하게 적용 가능.
+- 딥다이브 나레이션의 스펙 정보(specs)는 2026-09-01부터 shorts_log.json에 저장되기
+  시작했다 — 그 이전에 발행된 항목은 spec 없이(상품명/가격만으로) 생성된다.
+- 클립 전환은 xfade가 아니라 정지 비트(디바이더/전환 카드)+콘캣 하드컷으로 처리한다
+  (라떼는북한 채널에서 xfade 누적오차로 뒤로 갈수록 싱크가 어긋나는 문제를 겪은 뒤
+  확립된 패턴 — 정지 비트가 있으면 하드컷이어도 자연스러움).
 - 6개를 다 쓰면 shorts_log.json의 해당 항목에 compiled_in(롱폼 video_id)을 표시해서
   다음에 중복으로 다시 안 묶이게 한다.
 
@@ -17,6 +31,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import deepdive_narration
+import longform_graphics
 import shorts_log
 import upload_youtube
 
@@ -27,10 +43,25 @@ COUNTER_PATH = REPO_ROOT / "longform_counter.json"
 
 GCS_BACKUP_BUCKET = "shopping-paradise-daily-raw-luith"
 
+FPS = 25
+DIVIDER_DUR = 2.2
+TRANSITION_DUR = 1.3
+DEEPDIVE_TAIL = 0.4
+INTRO_DUR = 3.2
+OUTRO_DUR = 3.5
+
 
 def run(cmd, **kw):
     print("+", " ".join(cmd))
     subprocess.run(cmd, check=True, **kw)
+
+
+def _ffprobe_duration(path: Path) -> float:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, check=True,
+    )
+    return float(out.stdout.strip())
 
 
 def next_volume_number() -> int:
@@ -69,38 +100,124 @@ def download_short(video_id: str, out_path: Path):
     run(["yt-dlp", "-f", "mp4", "-o", str(out_path), f"https://youtu.be/{video_id}"])
 
 
-def build_longform(entries: list[dict], work_dir: Path) -> Path:
-    work_dir.mkdir(parents=True, exist_ok=True)
-    clip_paths = []
-    for i, e in enumerate(entries):
-        p = work_dir / f"clip{i}.mp4"
-        download_short(e["video_id"], p)
-        clip_paths.append(p)
+def _extract_frame(clip_path: Path, out_path: Path):
+    """딥다이브 배경용 프레임 — 훅(약 0~8초)이 지나고 스펙설명 구간(제품이 화면에
+    잘 보이는 구간)쯤에서 한 장 뽑는다."""
+    dur = _ffprobe_duration(clip_path)
+    mid = max(0.5, min(dur - 0.3, dur * 0.35))
+    run(["ffmpeg", "-y", "-v", "error", "-ss", f"{mid:.2f}", "-i", str(clip_path),
+         "-frames:v", "1", "-q:v", "2", str(out_path)])
 
-    # 화이트 플래시/후시 없이 하드컷으로 이어붙임(1차 버전) — 인코딩 편차에 안전하도록
-    # scale/setsar/fps로 정규화 후 filter concat 사용.
-    inputs = []
-    filter_parts = []
-    for i, p in enumerate(clip_paths):
-        inputs += ["-i", str(p)]
-        filter_parts.append(f"[{i}:v]scale=1080:1920,setsar=1,fps=25[v{i}];")
-        filter_parts.append(f"[{i}:a]aformat=sample_rates=44100:channel_layouts=stereo[a{i}];")
-    concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(len(clip_paths)))
-    filter_complex = "".join(filter_parts) + f"{concat_inputs}concat=n={len(clip_paths)}:v=1:a=1[vout][aout]"
+
+def _static_segment(image_path: Path, duration: float, out_path: Path):
+    run(["ffmpeg", "-y", "-v", "error",
+         "-loop", "1", "-t", f"{duration:.2f}", "-i", str(image_path),
+         "-f", "lavfi", "-t", f"{duration:.2f}", "-i", "anullsrc=r=44100:cl=stereo",
+         "-r", str(FPS), "-pix_fmt", "yuv420p",
+         "-c:v", "libx264", "-crf", "16", "-c:a", "aac", "-b:a", "192k",
+         "-shortest", str(out_path)])
+
+
+def _deepdive_segment(frame_path: Path, caption_path: Path, audio_path: Path, duration: float, out_path: Path):
+    zoom_frames = max(1, int(duration * FPS))
+    filter_txt = (
+        f"[0:v]scale=2160:3840,zoompan=z='min(zoom+0.0006,1.15)':d={zoom_frames}:s=1080x1920:fps={FPS}[bg];"
+        f"[bg][1:v]overlay=(1080-w)/2:1300:shortest=1[vout]"
+    )
+    run(["ffmpeg", "-y", "-v", "error",
+         "-loop", "1", "-i", str(frame_path),
+         "-loop", "1", "-i", str(caption_path),
+         "-i", str(audio_path),
+         "-filter_complex", filter_txt,
+         "-map", "[vout]", "-map", "2:a",
+         "-t", f"{duration:.2f}", "-r", str(FPS), "-pix_fmt", "yuv420p",
+         "-c:v", "libx264", "-crf", "16", "-c:a", "aac", "-b:a", "192k",
+         str(out_path)])
+
+
+def _normalized_pair(idx: int) -> str:
+    return (
+        f"[{idx}:v]fps={FPS},setsar=1,scale=1080:1920[v{idx}];"
+        f"[{idx}:a]aformat=sample_rates=44100:channel_layouts=stereo[a{idx}];"
+    )
+
+
+def _concat_pieces(pieces: list, out_path: Path):
+    """이미 각각 완결된(오디오 포함) mp4 조각들을 하드컷으로 이어붙인다. 라떼는북한
+    채널에서 확립된 교훈(xfade 누적오차 대신 concat 필터+fps/setsar 정규화)을 따름."""
+    n = len(pieces)
+    filter_parts = [_normalized_pair(i) for i in range(n)]
+    concat_in = "".join(f"[v{i}][a{i}]" for i in range(n))
+    filter_parts.append(f"{concat_in}concat=n={n}:v=1:a=1[vout][aout]")
+    filter_txt = "".join(filter_parts)
+
+    cmd = ["ffmpeg", "-y", "-v", "error"]
+    for p in pieces:
+        cmd += ["-i", str(p)]
+    cmd += ["-filter_complex", filter_txt, "-map", "[vout]", "-map", "[aout]",
+            "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+            str(out_path)]
+    run(cmd)
+
+
+def _entry_specs(e: dict):
+    specs = e.get("specs")
+    if not specs:
+        return None
+    return [(s["title"], s["body"]) for s in specs]
+
+
+def build_longform(entries: list, work_dir: Path, vol: int) -> Path:
+    work_dir.mkdir(parents=True, exist_ok=True)
+    n = len(entries)
+    pieces = []
+
+    intro_img = longform_graphics.build_intro_card(work_dir, vol, n)
+    intro_seg = work_dir / "seg_intro.mp4"
+    _static_segment(intro_img, INTRO_DUR, intro_seg)
+    pieces.append(intro_seg)
+
+    for i, e in enumerate(entries, start=1):
+        clip_path = work_dir / f"clip{i}.mp4"
+        download_short(e["video_id"], clip_path)
+
+        divider_img = longform_graphics.build_chapter_divider(
+            work_dir, i, n, e["product_name"], f"{e['price']:,}원",
+        )
+        divider_seg = work_dir / f"seg_divider{i}.mp4"
+        _static_segment(divider_img, DIVIDER_DUR, divider_seg)
+        pieces.append(divider_seg)
+        pieces.append(clip_path)
+
+        transition_img = longform_graphics.build_deepdive_transition(work_dir, i)
+        transition_seg = work_dir / f"seg_transition{i}.mp4"
+        _static_segment(transition_img, TRANSITION_DUR, transition_seg)
+        pieces.append(transition_seg)
+
+        frame_path = work_dir / f"frame{i}.jpg"
+        _extract_frame(clip_path, frame_path)
+
+        dd = deepdive_narration.generate_and_synthesize(
+            e["product_name"], e["price"], _entry_specs(e), e["character"], work_dir, i,
+        )
+        caption_img = longform_graphics.build_deepdive_caption(
+            work_dir, i, dd["narration"], dd["emphasis_words"],
+        )
+        deepdive_seg = work_dir / f"seg_deepdive{i}.mp4"
+        _deepdive_segment(frame_path, caption_img, dd["audio_path"], dd["duration"] + DEEPDIVE_TAIL, deepdive_seg)
+        pieces.append(deepdive_seg)
+
+    outro_img = longform_graphics.build_outro_card(work_dir)
+    outro_seg = work_dir / "seg_outro.mp4"
+    _static_segment(outro_img, OUTRO_DUR, outro_seg)
+    pieces.append(outro_seg)
 
     out_path = work_dir / "longform.mp4"
-    run([
-        "ffmpeg", "-y", "-v", "error",
-        *inputs,
-        "-filter_complex", filter_complex,
-        "-map", "[vout]", "-map", "[aout]",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-crf", "18",
-        str(out_path),
-    ])
+    _concat_pieces(pieces, out_path)
     return out_path
 
 
-def build_title_and_description(entries: list[dict], vol: int) -> tuple[str, str]:
+def build_title_and_description(entries: list, vol: int) -> tuple:
     names = [e["product_name"] for e in entries]
     title = f"[쇼핑의천국] 요즘 핫한 가전템 모음 Vol.{vol} | " + " · ".join(names[:3])
     title = title[:100]
@@ -152,9 +269,9 @@ def check_and_compile():
     batch = pending[:BATCH_SIZE]
     vol = next_volume_number()
     work_dir = REPO_ROOT / "work" / "longform" / f"vol{vol}"
-    print(f"[compile_longform] {BATCH_SIZE}개 도달 — Vol.{vol} 롱폼 제작 시작")
+    print(f"[compile_longform] {BATCH_SIZE}개 도달 — Vol.{vol} 롱폼 다이제스트 제작 시작")
 
-    longform_path = build_longform(batch, work_dir)
+    longform_path = build_longform(batch, work_dir, vol)
     title, description = build_title_and_description(batch, vol)
     result = upload_longform(longform_path, title, description)
 
