@@ -234,24 +234,30 @@ def main():
     ))
 
     # 11. 발행 기록 추가 (롱폼 자동 컴파일 판단용)
+    # 2026-09-01: specs 추가 — 롱폼 딥다이브 나레이션(compile_longform.py)이 스펙
+    # 정보를 재사용해 더 구체적인 코멘트를 생성할 수 있게 함.
     shorts_log.append_entry(
         args.character, product["productName"][:20], product["productPrice"],
         video_id, video_info["url"], coupang_url,
+        specs=[
+            {"title": script_data["spec1_title"], "body": script_data["spec1_body"]},
+            {"title": script_data["spec2_title"], "body": script_data["spec2_body"]},
+            {"title": script_data["spec3_title"], "body": script_data["spec3_body"]},
+        ],
     )
 
     # 12. 3일치(6개) 쌓였으면 롱폼 자동 제작+업로드
-    # 2026-08-28: 사용자 지시로 잠시 중단 — 숏폼 자체가 아직 상품 소싱/중복 문제로
-    # 루틴이 안 잡힌 상태라, 그게 안정화되기 전까지는 롱폼 자동합성을 돌리지 않는다.
-    # (pick_product.py 유사도 dedup + push_with_retry 수정으로 숏폼이 며칠간 안정적으로
-    # 돌아가는 걸 확인하면 아래 주석을 풀고 재개할 것.)
-    # def _compile_longform_step():
-    #     pending_before = len([e for e in shorts_log.load_log() if not e.get("compiled_in")])
-    #     result = compile_longform.check_and_compile()
-    #     if result:
-    #         return f"롱폼 완성! {result['url']}"
-    #     return f"대기 중 ({pending_before}/6)"
-    #
-    # soft_step("롱폼 자동 컴파일", _compile_longform_step)
+    # 2026-08-28: 숏폼 소싱/중복 문제 안정화 전까지 사용자 지시로 잠시 중단했었음.
+    # 2026-09-01: pick_product.py 유사도 dedup + push_with_retry(detached HEAD) 수정 이후
+    # 숏폼이 며칠간 안정적으로 발행되는 걸 확인, 사용자 확인 후 재개.
+    def _compile_longform_step():
+        pending_before = len([e for e in shorts_log.load_log() if not e.get("compiled_in")])
+        result = compile_longform.check_and_compile()
+        if result:
+            return f"롱폼 완성! {result['url']}"
+        return f"대기 중 ({pending_before}/6)"
+
+    soft_step("롱폼 자동 컴파일", _compile_longform_step)
 
     # 13. used_products.json + shorts_log.json + character_image_history.json
     # (+longform_counter.json, 있으면) 커밋 (핵심 - 중복 방지를 위해 반드시 반영).
