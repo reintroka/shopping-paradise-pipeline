@@ -146,23 +146,36 @@ def _static_segment(image_path: Path, duration: float, out_path: Path):
          "-shortest", str(out_path)])
 
 
-def _deepdive_segment(backdrop_path: Path, caption_path: Path, audio_path: Path, duration: float, out_path: Path):
+def _deepdive_segment(backdrop_path: Path, caption_specs: list, audio_path: Path, duration: float, out_path: Path):
     """backdrop_path는 이미 필러박스 합성이 끝난 가로(1920x1080) 스틸 — 그 위에 통째로
-    Ken Burns 줌을 걸고 하단에 강조 캡션을 얹는다."""
+    Ken Burns 줌을 걸고, caption_specs(캡션이미지경로, 시작초, 끝초) 각각을 해당 구간에만
+    enable='between(t,...)'로 오버레이한다. 2026-09-01 재설계: 기존엔 나레이션 전체를
+    캡션 이미지 1장으로 만들어 20~30초 내내 고정 표시했음(사용자 지적: "긴 대사를 한
+    화면으로 보여주나") — 오디오 트랙은 하나로 유지한 채 자막만 문장 단위로 페이지가
+    넘어가도록 바꿨다(longform_graphics.split_narration_pages/allocate_page_durations로
+    글자수 비례 타이밍 산출)."""
     zoom_frames = max(1, int(duration * FPS))
-    filter_txt = (
+    filter_parts = [
         f"[0:v]scale={LW * 2}:{LH * 2},zoompan=z='min(zoom+0.0004,1.12)':d={zoom_frames}:s={LW}x{LH}:fps={FPS}[bgz];"
-        f"[bgz][1:v]overlay=(W-w)/2:900:shortest=1[vout]"
-    )
-    run(["ffmpeg", "-y", "-v", "error",
-         "-loop", "1", "-i", str(backdrop_path),
-         "-loop", "1", "-i", str(caption_path),
-         "-i", str(audio_path),
-         "-filter_complex", filter_txt,
-         "-map", "[vout]", "-map", "2:a",
-         "-t", f"{duration:.2f}", "-r", str(FPS), "-pix_fmt", "yuv420p",
-         "-c:v", "libx264", "-crf", "16", "-c:a", "aac", "-b:a", "192k",
-         str(out_path)])
+    ]
+    cmd = ["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", str(backdrop_path)]
+    prev = "bgz"
+    n = len(caption_specs)
+    for i, (cap_path, start, end) in enumerate(caption_specs):
+        cmd += ["-loop", "1", "-i", str(cap_path)]
+        out_label = "vout" if i == n - 1 else f"v{i}"
+        filter_parts.append(
+            f"[{prev}][{i + 1}:v]overlay=(W-w)/2:900:enable='between(t,{start:.2f},{end:.2f})'[{out_label}];"
+        )
+        prev = out_label
+    cmd += ["-i", str(audio_path)]
+    audio_idx = n + 1
+    filter_txt = "".join(filter_parts)
+    cmd += ["-filter_complex", filter_txt, "-map", "[vout]", "-map", f"{audio_idx}:a",
+            "-t", f"{duration:.2f}", "-r", str(FPS), "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-crf", "16", "-c:a", "aac", "-b:a", "192k",
+            str(out_path)]
+    run(cmd)
 
 
 def _normalized_pair(idx: int) -> str:
@@ -234,11 +247,19 @@ def build_longform(entries: list, clip_paths: dict, work_dir: Path, vol: int) ->
         dd = deepdive_narration.generate_and_synthesize(
             e["product_name"], e["price"], _entry_specs(e), e["character"], work_dir, i,
         )
-        caption_img = longform_graphics.build_deepdive_caption(
-            work_dir, i, dd["narration"], dd["emphasis_words"],
-        )
+        pages = longform_graphics.split_narration_pages(dd["narration"])
+        page_durs = longform_graphics.allocate_page_durations(pages, dd["duration"])
+        caption_specs, t = [], 0.0
+        for pi, (page_text, pdur) in enumerate(zip(pages, page_durs)):
+            cap_img = longform_graphics.build_deepdive_caption(
+                work_dir, f"{i}_{pi}", page_text, dd["emphasis_words"],
+            )
+            end = t + pdur + (DEEPDIVE_TAIL if pi == len(pages) - 1 else 0)
+            caption_specs.append((cap_img, t, end))
+            t += pdur
+
         deepdive_seg = work_dir / f"seg_deepdive{i}.mp4"
-        _deepdive_segment(backdrop_path, caption_img, dd["audio_path"], dd["duration"] + DEEPDIVE_TAIL, deepdive_seg)
+        _deepdive_segment(backdrop_path, caption_specs, dd["audio_path"], dd["duration"] + DEEPDIVE_TAIL, deepdive_seg)
         pieces.append(deepdive_seg)
 
     outro_img = longform_graphics.build_outro_card(work_dir)
