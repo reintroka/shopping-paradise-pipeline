@@ -17,18 +17,27 @@ PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 롱폼 다이제스�
 아래 상품에 대해 20~30초 분량(공백 포함 110~160자)의 리뷰형 코멘트를 자연스러운
 구어체로 한 문단 작성하세요. 왜 이 상품이 주목받는지, 실사용 팁이나 장점을 구체적으로
 설명하되 과장/허위 광고성 표현은 피하고, 자연스럽게 소비자에게 도움이 되는 정보처럼
-쓰세요. 숫자(가격, 용량 등)는 한글 발음으로 풀어쓰지 말고 원래 숫자+단위 표기 그대로
-쓰세요(TTS가 정상적으로 읽습니다).
+쓰세요.
+
+이 코멘트는 음성 나레이션(TTS)으로 재생되는 동시에 화면 자막으로도 표시되므로,
+**같은 내용을 숫자 표기만 다르게 한 두 가지 버전**으로 작성하세요:
+- narration_spoken: TTS가 읽을 버전. 가격/용량 등 모든 숫자를 반드시 한글 발음으로
+  풀어써야 합니다(예: "722,650원"→"칠십이만이천육백오십원", "16GB"→"십육 기가",
+  "15.6인치"→"십오점육 인치"). 숫자를 원래 표기 그대로 두면 TTS가 잘못 읽습니다.
+- narration_caption: 화면 자막에 표시될 버전. narration_spoken과 문장 구조/내용은
+  완전히 동일하되, 숫자만 원래 표기(가격 콤마, GB, 인치 등)로 돌려쓰세요 — 화면에서는
+  풀어쓴 한글 숫자가 오히려 어색하고 길어 보입니다.
 
 이 코멘트에서 시청자가 화면 자막으로 볼 때 강조되면 좋을 핵심 단어/짧은 구 3~5개도
-따로 뽑아주세요(코멘트 본문에 실제로 등장하는 표현 그대로, 토씨 하나 다르지 않게).
+따로 뽑아주세요(narration_caption 본문에 실제로 등장하는 표현 그대로, 토씨 하나
+다르지 않게).
 
 [상품명] {product_name}
 [가격] {price}
 [핵심 스펙] {specs_text}
 
 [출력 형식 - JSON만 출력, 다른 텍스트 없이]
-{{"narration": "...", "emphasis_words": ["...", "..."]}}
+{{"narration_spoken": "...", "narration_caption": "...", "emphasis_words": ["...", "..."]}}
 """
 
 
@@ -65,13 +74,14 @@ def generate_and_synthesize(product_name: str, price: int, specs: list[tuple] | 
     )
     text = _call_gemini(prompt)
     data = _parse_json(text)
-    narration = data["narration"]
+    narration_spoken = data["narration_spoken"]
+    narration_caption = data["narration_caption"]
     emphasis_words = data.get("emphasis_words", [])
 
     audio_path = work_dir / f"deepdive_narration_{idx}.mp3"
-    meta = google_tts.synthesize(narration, character, audio_path)
+    meta = google_tts.synthesize(narration_spoken, character, audio_path)
     return {
-        "narration": narration,
+        "narration": narration_caption,
         "emphasis_words": emphasis_words,
         "audio_path": audio_path,
         "duration": meta["duration"],
