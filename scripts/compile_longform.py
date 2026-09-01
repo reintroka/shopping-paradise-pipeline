@@ -6,6 +6,13 @@
 톤은 새로 만들지 않고 이 채널 숏츠가 이미 쓰고 있는 골드 럭셔리 팔레트
 (build_graphics.py)를 그대로 재사용해 통일감을 유지한다.
 
+2026-09-01 밤 추가 개편(v2.1): v2 첫 렌더링본을 실제로 본 사용자가 "롱폼인데
+숏폼(세로)으로 만들면 어떡하나"고 지적 — v2는 원본 숏츠가 세로(1080x1920)라는
+이유로 최종 롱폼도 세로로 이어붙였는데, "롱폼"은 가로(1920x1080)여야 자연스럽다는
+지적. 카드(인트로/디바이더/전환/아웃트로)는 longform_graphics.py에서 가로 전용으로
+새로 설계했고, 세로 원본 숏츠 클립과 딥다이브 배경 스틸은 블러 배경+가운데 배치
+(필러박스, longform_graphics.pillarbox_filter_complex)로 가로 캔버스 안에 앉힌다.
+
 - 각 파이프라인 실행(run_pipeline.py) 끝에서 soft_step으로 호출됨 — 6개가 안 쌓였으면
   아무것도 안 하고 조용히 리턴(매번 호출해도 안전). 실패해도 예외가 soft_step에서
   잡히므로 숏츠 발행 자체는 막지 않는다 — 다음 실행 때 재시도됨(compiled_in 마킹은
@@ -35,6 +42,7 @@ import deepdive_narration
 import longform_graphics
 import shorts_log
 import upload_youtube
+from longform_graphics import LH, LW
 
 BATCH_SIZE = 6  # 하루 2개 x 3일
 HERE = Path(__file__).resolve().parent
@@ -102,10 +110,30 @@ def download_short(video_id: str, out_path: Path):
 
 def _extract_frame(clip_path: Path, out_path: Path):
     """딥다이브 배경용 프레임 — 훅(약 0~8초)이 지나고 스펙설명 구간(제품이 화면에
-    잘 보이는 구간)쯤에서 한 장 뽑는다."""
+    잘 보이는 구간)쯤에서 한 장 뽑는다. clip_path는 원본 세로(1080x1920) 다운로드본."""
     dur = _ffprobe_duration(clip_path)
     mid = max(0.5, min(dur - 0.3, dur * 0.35))
     run(["ffmpeg", "-y", "-v", "error", "-ss", f"{mid:.2f}", "-i", str(clip_path),
+         "-frames:v", "1", "-q:v", "2", str(out_path)])
+
+
+def _pillarbox_clip(src_path: Path, out_path: Path):
+    """세로(1080x1920) 원본 숏츠 클립을 가로(1920x1080) 롱폼 캔버스에 블러 배경+
+    가운데 배치(필러박스)로 변환 — 오디오는 그대로 유지."""
+    filter_txt = longform_graphics.pillarbox_filter_complex(border=True)
+    run(["ffmpeg", "-y", "-v", "error", "-i", str(src_path),
+         "-filter_complex", filter_txt, "-map", "[vout]", "-map", "0:a",
+         "-r", str(FPS), "-pix_fmt", "yuv420p",
+         "-c:v", "libx264", "-crf", "16", "-c:a", "aac", "-b:a", "192k",
+         str(out_path)])
+
+
+def _build_deepdive_backdrop(frame_path: Path, out_path: Path):
+    """딥다이브 배경 스틸도 클립과 동일한 필러박스 합성(블러 배경+가운데 배치)을 거쳐
+    가로 캔버스에 맞춘 뒤, 이 결과 위에 Ken Burns 줌을 적용한다(_deepdive_segment)."""
+    filter_txt = longform_graphics.pillarbox_filter_complex(border=True)
+    run(["ffmpeg", "-y", "-v", "error", "-i", str(frame_path),
+         "-filter_complex", filter_txt, "-map", "[vout]",
          "-frames:v", "1", "-q:v", "2", str(out_path)])
 
 
@@ -118,14 +146,16 @@ def _static_segment(image_path: Path, duration: float, out_path: Path):
          "-shortest", str(out_path)])
 
 
-def _deepdive_segment(frame_path: Path, caption_path: Path, audio_path: Path, duration: float, out_path: Path):
+def _deepdive_segment(backdrop_path: Path, caption_path: Path, audio_path: Path, duration: float, out_path: Path):
+    """backdrop_path는 이미 필러박스 합성이 끝난 가로(1920x1080) 스틸 — 그 위에 통째로
+    Ken Burns 줌을 걸고 하단에 강조 캡션을 얹는다."""
     zoom_frames = max(1, int(duration * FPS))
     filter_txt = (
-        f"[0:v]scale=2160:3840,zoompan=z='min(zoom+0.0006,1.15)':d={zoom_frames}:s=1080x1920:fps={FPS}[bg];"
-        f"[bg][1:v]overlay=(1080-w)/2:1300:shortest=1[vout]"
+        f"[0:v]scale={LW * 2}:{LH * 2},zoompan=z='min(zoom+0.0004,1.12)':d={zoom_frames}:s={LW}x{LH}:fps={FPS}[bgz];"
+        f"[bgz][1:v]overlay=(W-w)/2:900:shortest=1[vout]"
     )
     run(["ffmpeg", "-y", "-v", "error",
-         "-loop", "1", "-i", str(frame_path),
+         "-loop", "1", "-i", str(backdrop_path),
          "-loop", "1", "-i", str(caption_path),
          "-i", str(audio_path),
          "-filter_complex", filter_txt,
@@ -137,7 +167,7 @@ def _deepdive_segment(frame_path: Path, caption_path: Path, audio_path: Path, du
 
 def _normalized_pair(idx: int) -> str:
     return (
-        f"[{idx}:v]fps={FPS},setsar=1,scale=1080:1920[v{idx}];"
+        f"[{idx}:v]fps={FPS},setsar=1,scale={LW}:{LH}[v{idx}];"
         f"[{idx}:a]aformat=sample_rates=44100:channel_layouts=stereo[a{idx}];"
     )
 
@@ -178,7 +208,7 @@ def build_longform(entries: list, clip_paths: dict, work_dir: Path, vol: int) ->
     pieces.append(intro_seg)
 
     for i, e in enumerate(entries, start=1):
-        clip_path = clip_paths[e["video_id"]]
+        clip_path = clip_paths[e["video_id"]]  # 원본 세로(1080x1920) 다운로드본
 
         divider_img = longform_graphics.build_chapter_divider(
             work_dir, i, n, e["product_name"], f"{e['price']:,}원",
@@ -186,7 +216,10 @@ def build_longform(entries: list, clip_paths: dict, work_dir: Path, vol: int) ->
         divider_seg = work_dir / f"seg_divider{i}.mp4"
         _static_segment(divider_img, DIVIDER_DUR, divider_seg)
         pieces.append(divider_seg)
-        pieces.append(clip_path)
+
+        landscape_clip = work_dir / f"clip_landscape{i}.mp4"
+        _pillarbox_clip(clip_path, landscape_clip)
+        pieces.append(landscape_clip)
 
         transition_img = longform_graphics.build_deepdive_transition(work_dir, i)
         transition_seg = work_dir / f"seg_transition{i}.mp4"
@@ -195,6 +228,8 @@ def build_longform(entries: list, clip_paths: dict, work_dir: Path, vol: int) ->
 
         frame_path = work_dir / f"frame{i}.jpg"
         _extract_frame(clip_path, frame_path)
+        backdrop_path = work_dir / f"backdrop{i}.jpg"
+        _build_deepdive_backdrop(frame_path, backdrop_path)
 
         dd = deepdive_narration.generate_and_synthesize(
             e["product_name"], e["price"], _entry_specs(e), e["character"], work_dir, i,
@@ -203,7 +238,7 @@ def build_longform(entries: list, clip_paths: dict, work_dir: Path, vol: int) ->
             work_dir, i, dd["narration"], dd["emphasis_words"],
         )
         deepdive_seg = work_dir / f"seg_deepdive{i}.mp4"
-        _deepdive_segment(frame_path, caption_img, dd["audio_path"], dd["duration"] + DEEPDIVE_TAIL, deepdive_seg)
+        _deepdive_segment(backdrop_path, caption_img, dd["audio_path"], dd["duration"] + DEEPDIVE_TAIL, deepdive_seg)
         pieces.append(deepdive_seg)
 
     outro_img = longform_graphics.build_outro_card(work_dir)
