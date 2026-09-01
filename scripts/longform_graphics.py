@@ -219,23 +219,35 @@ def build_intro_card(out_dir: Path, vol: int, count: int) -> Path:
 
 
 def build_chapter_divider(out_dir: Path, idx: int, total: int, product_name: str, price_text: str) -> Path:
+    """2026-09-01 재설계: 인트로/아웃트로처럼 배지(고정 top=100)부터 아래로 쌓기만 해서
+    위로 쏠려 보였다(사용자 스크린샷 지적: "이건 왜 위로 쏠려있나"). 배지+타이틀블록+
+    ITEM 카운터 전체 높이를 먼저 구해 캔버스 세로 중앙에 오도록 시작 y를 역산한다."""
     canvas = _landscape_canvas(seed=idx * 29 + 3)
 
     bg.build_step_badge(out_dir, idx, size=150)
     badge = Image.open(out_dir / f"step_badge{idx}.png").convert("RGBA")
-    badge_top = 100
-    canvas.alpha_composite(badge, ((LW - badge.width) // 2, badge_top))
 
     bg.build_title_block(out_dir, product_name, price_text)
     title = Image.open(out_dir / "title_block.png").convert("RGBA")
-    title_top = badge_top + badge.height + 20
-    canvas.alpha_composite(title, ((LW - title.width) // 2, title_top))
 
-    d = ImageDraw.Draw(canvas)
     f_eyebrow = bg.sfont(26, "Medium")
     eyebrow = f"ITEM {idx} / {total}"
+
+    GAP_BADGE_TITLE = 20
+    GAP_TITLE_EYEBROW = 10
+    EYEBROW_H = 36
+
+    total_h = badge.height + GAP_BADGE_TITLE + title.height + GAP_TITLE_EYEBROW + EYEBROW_H
+    y = (LH - total_h) // 2
+
+    canvas.alpha_composite(badge, ((LW - badge.width) // 2, y))
+    y += badge.height + GAP_BADGE_TITLE
+
+    canvas.alpha_composite(title, ((LW - title.width) // 2, y))
+    y += title.height + GAP_TITLE_EYEBROW
+
+    d = ImageDraw.Draw(canvas)
     ew = bg.tracked_width(eyebrow, f_eyebrow, 6)
-    y = title_top + title.height + 10
     bg.draw_tracked(d, ((LW - ew) / 2, y), eyebrow, f_eyebrow, GOLD_DEEP, 6)
 
     out_path = out_dir / f"divider_{idx}.png"
