@@ -236,9 +236,13 @@ def main():
     # 11. 발행 기록 추가 (롱폼 자동 컴파일 판단용)
     # 2026-09-01: specs 추가 — 롱폼 딥다이브 나레이션(compile_longform.py)이 스펙
     # 정보를 재사용해 더 구체적인 코멘트를 생성할 수 있게 함.
+    # 2026-09-01 추가: product_image(쿠팡 원본 상품사진 URL)도 저장 — 롱폼 딥다이브
+    # 배경이 영상 프레임 캡처 대신 실제 상품사진을 build_graphics와 동일한 금테+그림자+
+    # 반사 처리로 예쁘게 보여줄 수 있게 함(사용자 요청: "제품 이미지 가져와서 멋지게").
     shorts_log.append_entry(
         args.character, product["productName"][:20], product["productPrice"],
         video_id, video_info["url"], coupang_url,
+        product_image=product["productImage"],
         specs=[
             {"title": script_data["spec1_title"], "body": script_data["spec1_body"]},
             {"title": script_data["spec2_title"], "body": script_data["spec2_body"]},
