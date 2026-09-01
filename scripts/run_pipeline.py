@@ -91,7 +91,22 @@ def push_with_retry(repo_root: Path, max_tries: int = 3) -> None:
                 raise
             print(f"[push_with_retry] push 실패(시도 {attempt}/{max_tries}): {e} — fetch+rebase 후 재시도")
             run(["git", "-C", str(repo_root), "fetch", "origin"])
-            run(["git", "-C", str(repo_root), "rebase", "origin/main"])
+            try:
+                run(["git", "-C", str(repo_root), "rebase", "origin/main"])
+            except subprocess.CalledProcessError:
+                # 2026-09-01: 코어디웹에서 실제로 겪은 사고 - 다른 프로세스(예: female-noon/
+                # male-evening 두 루틴)가 같은 상태파일을 동시에 건드려 진짜 콘텐츠 충돌이
+                # 나면 rebase가 충돌 마커만 남기고 죽고, 다음 실행이 그 마커를 그대로 읽어
+                # 상태파일이 통째로 깨지는 연쇄사고로 이어질 수 있다. rebase를 즉시 abort하고
+                # merge로 한 번 더 시도해 저장소를 깨진 상태로 방치하지 않는다.
+                print("[push_with_retry] rebase 충돌 — abort 후 merge로 재시도")
+                subprocess.run(["git", "-C", str(repo_root), "rebase", "--abort"])
+                try:
+                    run(["git", "-C", str(repo_root), "-c", "user.email=bot@shopping-paradise.local",
+                         "-c", "user.name=shopping-paradise-bot", "merge", "origin/main", "--no-edit"])
+                except subprocess.CalledProcessError:
+                    subprocess.run(["git", "-C", str(repo_root), "merge", "--abort"])
+                    raise
 
 
 soft_step_results = []
