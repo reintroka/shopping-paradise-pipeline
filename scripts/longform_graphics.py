@@ -259,6 +259,73 @@ def build_deepdive_transition(out_dir: Path, idx: int) -> Path:
     return out_path
 
 
+def build_deepdive_product_backdrop(out_dir: Path, product_image_path: Path, product_name: str,
+                                     price_text: str, idx: int) -> Path:
+    """딥다이브 배경 — 실제 쿠팡 상품사진을 크게 보여주는 매거진 화보풍 레이아웃(왼쪽 큰
+    사진+오른쪽 상품명/가격). 2026-09-01: 기존엔 숏츠 영상에서 프레임 한 장을 그냥 뽑아
+    블러 배경으로 썼는데(동작 중이거나 인물 클로즈업일 수 있어 품질이 들쭉날쭉), 사용자
+    요청으로 실제 상품사진을 쓰도록 바꿨다. 숏츠의 정사각 카드(build_product_assets)를
+    그대로 재사용하지 않고 새로 디자인한 이유는 사용자가 "쇼츠하고 똑같은 형식일 필요는
+    없다"고 명확히 지적했기 때문 — 가로 캔버스에 맞는 넓은 화보 레이아웃으로 새로 짰다.
+    캡션 pill이 y=900부터 하단에 얹히므로(_deepdive_segment) 사진/텍스트는 그 위 공간에만
+    배치한다."""
+    canvas = _landscape_canvas(seed=idx * 53 + 7)
+    d = ImageDraw.Draw(canvas)
+
+    PHOTO_W, PHOTO_H = 640, 640
+    photo = Image.open(product_image_path).convert("RGBA")
+    scale = max(PHOTO_W / photo.width, PHOTO_H / photo.height)
+    nw, nh = max(1, int(photo.width * scale)), max(1, int(photo.height * scale))
+    photo_r = photo.resize((nw, nh), Image.LANCZOS)
+    left, top = (nw - PHOTO_W) // 2, (nh - PHOTO_H) // 2
+    photo_c = photo_r.crop((left, top, left + PHOTO_W, top + PHOTO_H))
+
+    radius = 30
+    mask = Image.new("L", (PHOTO_W, PHOTO_H), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, PHOTO_W - 1, PHOTO_H - 1], radius=radius, fill=255)
+    framed = Image.new("RGBA", (PHOTO_W, PHOTO_H), (0, 0, 0, 0))
+    framed.paste(photo_c, (0, 0), mask)
+
+    photo_x = 130
+    photo_y = (LH - PHOTO_H) // 2 - 40
+
+    shadow = Image.new("RGBA", (PHOTO_W + 100, 150), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).ellipse([50, 25, PHOTO_W + 50, 130], fill=(20, 14, 8, 140))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(26))
+    canvas.alpha_composite(shadow, (photo_x - 50, photo_y + PHOTO_H - 55))
+
+    canvas.alpha_composite(framed, (photo_x, photo_y))
+    d.rounded_rectangle([photo_x, photo_y, photo_x + PHOTO_W - 1, photo_y + PHOTO_H - 1],
+                         radius=radius, outline=GOLD, width=4)
+
+    text_x = photo_x + PHOTO_W + 90
+    max_text_w = LW - text_x - 110
+
+    f_eyebrow = bg.sfont(24, "Medium")
+    eyebrow = "TODAY'S PICK"
+    ew = bg.tracked_width(eyebrow, f_eyebrow, 6)
+    y = photo_y + 30
+    bg.draw_tracked(d, (text_x, y), eyebrow, f_eyebrow, GOLD_DEEP, 6)
+    y += 46
+
+    f_name = bg.sfont(46, "Bold")
+    lines = _wrap_lines(product_name, f_name, d, max_text_w)[:3]
+    for line in lines:
+        d.text((text_x, y), line, font=f_name, fill=CHARCOAL)
+        y += 60
+    y += 22
+
+    d.line([(text_x, y), (text_x + 90, y)], fill=(*GOLD[:3], 210), width=2)
+    y += 26
+
+    f_price = bg.sfont(40, "SemiBold")
+    d.text((text_x, y), price_text, font=f_price, fill=GOLD_DEEP)
+
+    out_path = out_dir / f"deepdive_product_bg_{idx}.png"
+    canvas.convert("RGB").save(out_path)
+    return out_path
+
+
 def build_outro_card(out_dir: Path) -> Path:
     """인트로와 동일하게 세로 중앙정렬 + 골드 그라데이션 헤드라인으로 재설계."""
     canvas = _landscape_canvas(seed=97)
