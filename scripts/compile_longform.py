@@ -21,9 +21,12 @@
   GCS 백업 버킷(shopping-paradise-daily-raw-luith, upload_youtube.py가 발행 직후
   올려둠)에서 받고, 백업이 없는(백업 도입 이전 발행분) 경우에만 yt-dlp로 유튜브에서
   다시 내려받는다.
-- 딥다이브 배경 이미지는 별도로 생성/저장하지 않고, 다운로드한 숏츠 클립 자체에서
-  프레임을 뽑아 재사용한다 — 제품 이미지 URL을 따로 영구 저장할 필요가 없어져서
-  2026-09-01 이전 발행분(specs 없음)에도 동일하게 적용 가능.
+- 딥다이브 배경: shorts_log.json에 product_image(쿠팡 원본 상품사진 URL, 2026-09-01
+  추가)가 있으면 그걸 내려받아 매거진 화보풍 레이아웃(longform_graphics.
+  build_deepdive_product_backdrop)으로 예쁘게 보여준다 — 숏츠의 정사각 카드와는
+  다른 새 디자인(사용자 지시: "쇼츠하고 똑같은 형식일 필요는 없다"). product_image가
+  없는 옛 발행분(2026-09-01 이전)이나 다운로드 실패 시에는 기존 방식대로 다운로드한
+  숏츠 클립에서 프레임을 뽑아 블러 필러박스 배경으로 폴백한다.
 - 딥다이브 나레이션의 스펙 정보(specs)는 2026-09-01부터 shorts_log.json에 저장되기
   시작했다 — 그 이전에 발행된 항목은 spec 없이(상품명/가격만으로) 생성된다.
 - 클립 전환은 xfade가 아니라 정지 비트(디바이더/전환 카드)+콘캣 하드컷으로 처리한다
@@ -130,11 +133,27 @@ def _pillarbox_clip(src_path: Path, out_path: Path):
 
 def _build_deepdive_backdrop(frame_path: Path, out_path: Path):
     """딥다이브 배경 스틸도 클립과 동일한 필러박스 합성(블러 배경+가운데 배치)을 거쳐
-    가로 캔버스에 맞춘 뒤, 이 결과 위에 Ken Burns 줌을 적용한다(_deepdive_segment)."""
+    가로 캔버스에 맞춘 뒤, 이 결과 위에 Ken Burns 줌을 적용한다(_deepdive_segment).
+    product_image가 없는 옛 발행분이나 상품사진 다운로드 실패 시에만 쓰는 폴백."""
     filter_txt = longform_graphics.pillarbox_filter_complex(border=True)
     run(["ffmpeg", "-y", "-v", "error", "-i", str(frame_path),
          "-filter_complex", filter_txt, "-map", "[vout]",
          "-frames:v", "1", "-q:v", "2", str(out_path)])
+
+
+def _download_product_image(url: str, out_path: Path) -> bool:
+    """shorts_log.json에 저장된 쿠팡 원본 상품사진 URL을 내려받는다. 실패하면(URL
+    만료, 네트워크 오류 등) False를 반환해 build_longform이 영상 프레임 캡처 폴백으로
+    넘어가게 한다."""
+    try:
+        import urllib.request
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            out_path.write_bytes(resp.read())
+        return True
+    except Exception as exc:
+        print(f"[compile_longform] 상품사진 다운로드 실패, 영상 프레임으로 대체: {exc}")
+        return False
 
 
 def _static_segment(image_path: Path, duration: float, out_path: Path):
@@ -239,10 +258,19 @@ def build_longform(entries: list, clip_paths: dict, work_dir: Path, vol: int) ->
         _static_segment(transition_img, TRANSITION_DUR, transition_seg)
         pieces.append(transition_seg)
 
-        frame_path = work_dir / f"frame{i}.jpg"
-        _extract_frame(clip_path, frame_path)
-        backdrop_path = work_dir / f"backdrop{i}.jpg"
-        _build_deepdive_backdrop(frame_path, backdrop_path)
+        backdrop_path = None
+        product_image_url = e.get("product_image")
+        if product_image_url:
+            product_jpg = work_dir / f"product{i}.jpg"
+            if _download_product_image(product_image_url, product_jpg):
+                backdrop_path = longform_graphics.build_deepdive_product_backdrop(
+                    work_dir, product_jpg, e["product_name"], f"{e['price']:,}원", i,
+                )
+        if backdrop_path is None:
+            frame_path = work_dir / f"frame{i}.jpg"
+            _extract_frame(clip_path, frame_path)
+            backdrop_path = work_dir / f"backdrop{i}.jpg"
+            _build_deepdive_backdrop(frame_path, backdrop_path)
 
         dd = deepdive_narration.generate_and_synthesize(
             e["product_name"], e["price"], _entry_specs(e), e["character"], work_dir, i,
