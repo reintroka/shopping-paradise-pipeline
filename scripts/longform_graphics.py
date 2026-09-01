@@ -379,6 +379,11 @@ def build_deepdive_caption(out_dir: Path, idx, text: str, emphasis_words: list,
     d0 = ImageDraw.Draw(tmp)
     inner_w = max_width - 70
 
+    # 2026-09-01: emphasis_words는 Gemini가 "짧은 구"로 뽑아주기 때문에("저소음 모터"처럼
+    # 공백 포함) 원래 코드(ew in word, 자막은 공백 기준으로 단어 분리됨)로는 절대 매치가
+    # 안 돼 하이라이트가 항상 죽어있었다 — 구를 개별 단어로 쪼갠 토큰 집합으로 비교.
+    emphasis_tokens = {tok for ew in emphasis_words if ew for tok in ew.split(" ") if tok}
+
     size = font_size
     f = bg.sfont(size, "SemiBold")
     lines = _wrap_lines(text, f, d0, inner_w)
@@ -404,7 +409,7 @@ def build_deepdive_caption(out_dir: Path, idx, text: str, emphasis_words: list,
         parts = []
         total_w = 0.0
         for word in line.split(" "):
-            is_em = any(ew and ew in word for ew in emphasis_words)
+            is_em = any(tok in word for tok in emphasis_tokens)
             wf = f_em if is_em else f
             ww = d0.textlength(word + " ", font=wf)
             parts.append((word, wf, is_em))
