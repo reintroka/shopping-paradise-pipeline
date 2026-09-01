@@ -5,7 +5,11 @@
           video_id, url, coupang_url, compiled_in(없으면 아직 롱폼에 안 들어감),
           specs(2026-09-01 추가, [{"title":..,"body":..}]x3 — 롱폼 딥다이브 나레이션
           생성 시 스펙 정보를 재사용하기 위함. 이 필드 추가 이전 발행분에는 없음 —
-          compile_longform.py가 없는 경우 상품명/가격만으로 대체 처리한다.)}
+          compile_longform.py가 없는 경우 상품명/가격만으로 대체 처리한다.),
+          product_image(2026-09-01 추가, 쿠팡 원본 상품사진 URL — 롱폼 딥다이브 배경을
+          영상 프레임 캡처가 아니라 실제 상품사진을 build_graphics.build_product_assets로
+          금테+그림자+반사 처리해서 쓰기 위함. 이 필드 이전 발행분엔 없어서
+          compile_longform.py가 영상 프레임 캡처로 폴백한다.)}
 """
 import json
 from datetime import datetime, timezone, timedelta
@@ -27,7 +31,7 @@ def save_log(entries: list[dict]):
 
 
 def append_entry(character: str, product_name: str, price: int, video_id: str, url: str, coupang_url: str,
-                  specs: list[dict] | None = None):
+                  specs: list[dict] | None = None, product_image: str | None = None):
     now_kst = datetime.now(KST)
     entries = load_log()
     entry = {
@@ -43,6 +47,8 @@ def append_entry(character: str, product_name: str, price: int, video_id: str, u
     }
     if specs:
         entry["specs"] = specs
+    if product_image:
+        entry["product_image"] = product_image
     entries.append(entry)
     save_log(entries)
     return entries
