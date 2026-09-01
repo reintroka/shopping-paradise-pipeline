@@ -167,7 +167,7 @@ def _entry_specs(e: dict):
     return [(s["title"], s["body"]) for s in specs]
 
 
-def build_longform(entries: list, work_dir: Path, vol: int) -> Path:
+def build_longform(entries: list, clip_paths: dict, work_dir: Path, vol: int) -> Path:
     work_dir.mkdir(parents=True, exist_ok=True)
     n = len(entries)
     pieces = []
@@ -178,8 +178,7 @@ def build_longform(entries: list, work_dir: Path, vol: int) -> Path:
     pieces.append(intro_seg)
 
     for i, e in enumerate(entries, start=1):
-        clip_path = work_dir / f"clip{i}.mp4"
-        download_short(e["video_id"], clip_path)
+        clip_path = clip_paths[e["video_id"]]
 
         divider_img = longform_graphics.build_chapter_divider(
             work_dir, i, n, e["product_name"], f"{e['price']:,}원",
@@ -259,6 +258,35 @@ def upload_longform(video_path: Path, title: str, description: str) -> dict:
     return {"video_id": video_id, "url": f"https://youtu.be/{video_id}"}
 
 
+def _gather_batch(pending: list, work_dir: Path):
+    """다운로드 가능한 항목만 골라 6개를 채운다.
+
+    2026-09-01: 미리보기 렌더링 중 실제로 겪은 문제 — GCS 백업이 없고(그 날의
+    upload_youtube.py _backup_to_gcs가 예외를 삼키고 경고만 남기는 실패 케이스) yt-dlp
+    폴백도 유튜브 봇차단(429/"Sign in to confirm you're not a bot")에 걸려 영구히
+    다운로드 불가능한 항목이 하나 있었다. 이런 항목을 그냥 pending[:6]으로 고정해
+    버리면, 다운로드 불가 항목이 매번 배치에 포함돼 매 실행마다 5개를 헛수고로 다시
+    처리하고 실패하는 걸 영원히 반복하게 된다 — 실패한 항목은 즉시
+    compiled_in="SKIPPED_UNAVAILABLE"로 영구 마킹해 배치에서 빼고, 그다음 대기 항목으로
+    6개를 채운다."""
+    batch, clip_paths = [], {}
+    skipped_any = False
+    for e in pending:
+        if len(batch) >= BATCH_SIZE:
+            break
+        clip_path = work_dir / f"clip_{e['video_id']}.mp4"
+        try:
+            download_short(e["video_id"], clip_path)
+        except Exception as exc:
+            print(f"[compile_longform] {e['video_id']}({e['product_name']}) 다운로드 실패, 영구 스킵: {exc}")
+            e["compiled_in"] = "SKIPPED_UNAVAILABLE"
+            skipped_any = True
+            continue
+        batch.append(e)
+        clip_paths[e["video_id"]] = clip_path
+    return batch, clip_paths, skipped_any
+
+
 def check_and_compile():
     entries = shorts_log.load_log()
     pending = [e for e in entries if not e.get("compiled_in")]
@@ -266,12 +294,23 @@ def check_and_compile():
         print(f"[compile_longform] 아직 {len(pending)}/{BATCH_SIZE}개 — 대기")
         return None
 
-    batch = pending[:BATCH_SIZE]
     vol = next_volume_number()
     work_dir = REPO_ROOT / "work" / "longform" / f"vol{vol}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    batch, clip_paths, skipped_any = _gather_batch(pending, work_dir)
+    if skipped_any:
+        # 스킵 마킹은 배치 성사 여부와 무관하게 즉시 저장 — 다음 실행 때 같은 항목을
+        # 또 시도하지 않게 하기 위함.
+        shorts_log.save_log(entries)
+
+    if len(batch) < BATCH_SIZE:
+        print(f"[compile_longform] 다운로드 가능한 항목이 {len(batch)}/{BATCH_SIZE}개뿐 — 이번엔 대기")
+        return None
+
     print(f"[compile_longform] {BATCH_SIZE}개 도달 — Vol.{vol} 롱폼 다이제스트 제작 시작")
 
-    longform_path = build_longform(batch, work_dir, vol)
+    longform_path = build_longform(batch, clip_paths, work_dir, vol)
     title, description = build_title_and_description(batch, vol)
     result = upload_longform(longform_path, title, description)
 
