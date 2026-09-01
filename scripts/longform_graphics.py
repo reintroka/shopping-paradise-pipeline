@@ -17,6 +17,7 @@
 import random
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 import build_graphics as bg
@@ -97,30 +98,120 @@ def _place_logo_landscape(canvas: Image.Image, out_dir: Path, target_w: int = 30
     return top + logo_s.height
 
 
-def build_intro_card(out_dir: Path, vol: int, count: int) -> Path:
-    canvas = _landscape_canvas(seed=vol * 13 + 1)
-    y = _place_logo_landscape(canvas, out_dir, target_w=300, top=60) + 24
+def _gold_headline_line(text: str, font, tracking: int = 0) -> Image.Image:
+    """build_graphics.build_title_block의 이름 그라데이션(밝은 크림→딥골드) + 그림자 +
+    상단 하이라이트 기법을 임의 한 줄 텍스트에 재사용 가능하게 일반화한 것(박스 테두리/
+    가격줄은 뺌). 인트로/아웃트로 카드가 지금까지 플랫 CHARCOAL 단색 텍스트만 쓰고
+    있었는데, 디바이더 카드(build_title_block)와 같은 톤의 고급스러운 헤드라인으로
+    맞춰서 카드 간 퀄리티 격차를 없앤다. 2026-09-01 사용자 지적: "인트로 카드섹션
+    디자인도 좀 고퀄리티로"."""
+    tmp = Image.new("RGBA", (10, 10))
+    d0 = ImageDraw.Draw(tmp)
+    tw = int(bg.tracked_width(text, font, tracking)) + 24
+    th = font.size + 44
+    layer = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
 
+    shadow = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
+    bg.draw_tracked(ImageDraw.Draw(shadow), (12, 16), text, font, (30, 20, 8, 130), tracking)
+    layer.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(4)))
+
+    base = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
+    bg.draw_tracked(ImageDraw.Draw(base), (12, 12), text, font, (96, 66, 24, 255), tracking,
+                     stroke_width=2, stroke_fill=(96, 66, 24, 255))
+    layer.alpha_composite(base)
+
+    mask = Image.new("L", (tw, th), 0)
+    bg.draw_tracked(ImageDraw.Draw(mask), (12, 12), text, font, 255, tracking)
+
+    stops = [
+        (0.0, (250, 232, 176)),
+        (0.35, (214, 168, 92)),
+        (0.55, (178, 130, 46)),
+        (0.75, (222, 182, 108)),
+        (1.0, (168, 124, 58)),
+    ]
+    arr = np.zeros((th, tw, 3), dtype=np.uint8)
+    for yy in range(th):
+        t = yy / th
+        for i in range(len(stops) - 1):
+            t0, c0 = stops[i]
+            t1, c1 = stops[i + 1]
+            if t0 <= t <= t1:
+                fr = (t - t0) / (t1 - t0) if t1 > t0 else 0
+                arr[yy, :, :] = tuple(int(c0[k] + (c1[k] - c0[k]) * fr) for k in range(3))
+                break
+    grad = Image.fromarray(arr, "RGB").convert("RGBA")
+    layer.alpha_composite(Image.composite(grad, Image.new("RGBA", (tw, th), (0, 0, 0, 0)), mask))
+
+    highlight = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
+    bg.draw_tracked(ImageDraw.Draw(highlight), (12, 11), text, font, (255, 250, 225, 90), tracking)
+    hmask = Image.new("L", (tw, th), 0)
+    ImageDraw.Draw(hmask).rectangle([0, 0, tw, th // 2], fill=255)
+    layer.alpha_composite(Image.composite(highlight, Image.new("RGBA", (tw, th), (0, 0, 0, 0)), hmask))
+
+    return layer
+
+
+def build_intro_card(out_dir: Path, vol: int, count: int) -> Path:
+    """2026-09-01 재설계: 기존엔 로고부터 아래로 순서대로 쌓기만 해서 콘텐츠가 위쪽에
+    쏠리고 캔버스 하단이 텅 비어 보였다(사용자 지적: "위로 치우쳐 있나.. 가운데
+    위치해야지"). 모든 블록의 높이를 먼저 계산해 전체 높이를 구한 뒤, 캔버스(1080px)
+    안에서 세로로 정확히 중앙에 오도록 시작 y를 역산한다. 타이틀도 플랫 텍스트 대신
+    골드 그라데이션 헤드라인(_gold_headline_line)으로 격상."""
+    canvas = _landscape_canvas(seed=vol * 13 + 1)
     d = ImageDraw.Draw(canvas)
+
+    bg.build_logo_xl(out_dir)
+    logo = Image.open(out_dir / "logo_xl.png").convert("RGBA")
+    logo_w = 300
+    logo_s = logo.resize((logo_w, max(1, int(logo.height * logo_w / logo.width))), Image.LANCZOS)
+
     f_eyebrow = bg.sfont(28, "Medium")
+    f_title = bg.sfont(60, "Bold")
+    f_sub = bg.sfont(26, "Regular")
+
     eyebrow = f"VOL.{vol}"
+    title_lines = ["이번 주 인기템", f"모음 · 아이템 {count}개"]
+    sub = "쇼핑의천국이 엄선한 오늘의 추천템, 한 번에 몰아보기"
+
+    headlines = [_gold_headline_line(line, f_title, tracking=2) for line in title_lines]
+
+    GAP_LOGO_EYEBROW = 30
+    EYEBROW_H = 40
+    GAP_EYEBROW_TITLE = 18
+    GAP_TITLE_LINES = -14  # 그라데이션 헤드라인 레이어 자체 여백(th=font+44)을 보정
+    GAP_TITLE_SUB = 26
+    SUB_H = 34
+    GAP_SUB_DIVIDER = 38
+
+    total_h = (
+        logo_s.height + GAP_LOGO_EYEBROW + EYEBROW_H + GAP_EYEBROW_TITLE
+        + sum(h.height for h in headlines) + GAP_TITLE_LINES * (len(headlines) - 1)
+        + GAP_TITLE_SUB + SUB_H + GAP_SUB_DIVIDER + 2
+    )
+    y = (LH - total_h) // 2
+
+    canvas.alpha_composite(logo_s, ((LW - logo_s.width) // 2, y))
+    y += logo_s.height + GAP_LOGO_EYEBROW
+
     ew = bg.tracked_width(eyebrow, f_eyebrow, 8)
     bg.draw_tracked(d, ((LW - ew) / 2, y), eyebrow, f_eyebrow, GOLD_DEEP, 8)
-    y += 50
+    tick_y = y + 14
+    d.regular_polygon((LW / 2 - ew / 2 - 26, tick_y, 5), n_sides=4, rotation=45, fill=(*GOLD[:3], 220))
+    d.regular_polygon((LW / 2 + ew / 2 + 26, tick_y, 5), n_sides=4, rotation=45, fill=(*GOLD[:3], 220))
+    y += EYEBROW_H + GAP_EYEBROW_TITLE
 
-    f_title = bg.sfont(58, "Bold")
-    for line in ["이번 주 인기템", f"모음 · 아이템 {count}개"]:
-        lw = d.textlength(line, font=f_title)
-        d.text(((LW - lw) / 2, y), line, font=f_title, fill=CHARCOAL)
-        y += 76
-    y += 10
+    for headline in headlines:
+        canvas.alpha_composite(headline, ((LW - headline.width) // 2, y))
+        y += headline.height + GAP_TITLE_LINES
+    y += GAP_TITLE_SUB
 
-    f_sub = bg.sfont(26, "Regular")
-    sub = "쇼핑의천국이 엄선한 오늘의 추천템, 한 번에 몰아보기"
     sw = d.textlength(sub, font=f_sub)
     d.text(((LW - sw) / 2, y), sub, font=f_sub, fill=GOLD_DEEP)
-    y += 46
+    y += SUB_H + GAP_SUB_DIVIDER
+
     d.line([(LW / 2 - 220, y), (LW / 2 + 220, y)], fill=(*GOLD[:3], 200), width=2)
+    d.regular_polygon((LW / 2, y, 6), n_sides=4, rotation=45, fill=GOLD)
 
     out_path = out_dir / "intro_card.png"
     canvas.convert("RGB").save(out_path)
@@ -169,19 +260,42 @@ def build_deepdive_transition(out_dir: Path, idx: int) -> Path:
 
 
 def build_outro_card(out_dir: Path) -> Path:
+    """인트로와 동일하게 세로 중앙정렬 + 골드 그라데이션 헤드라인으로 재설계."""
     canvas = _landscape_canvas(seed=97)
-    y = _place_logo_landscape(canvas, out_dir, target_w=280, top=130) + 40
-
     d = ImageDraw.Draw(canvas)
-    f_title = bg.sfont(50, "Bold")
-    for line in ["오늘 소개한 아이템들,", "프로필 링크에서 만나보세요"]:
-        lw = d.textlength(line, font=f_title)
-        d.text(((LW - lw) / 2, y), line, font=f_title, fill=CHARCOAL)
-        y += 68
-    y += 20
 
+    bg.build_logo_xl(out_dir)
+    logo = Image.open(out_dir / "logo_xl.png").convert("RGBA")
+    logo_w = 280
+    logo_s = logo.resize((logo_w, max(1, int(logo.height * logo_w / logo.width))), Image.LANCZOS)
+
+    f_title = bg.sfont(50, "Bold")
     f_sub = bg.sfont(26, "Regular")
+    title_lines = ["오늘 소개한 아이템들,", "프로필 링크에서 만나보세요"]
     sub = "다음 다이제스트도 놓치지 마세요 · 구독하고 알림 켜기"
+
+    headlines = [_gold_headline_line(line, f_title, tracking=1) for line in title_lines]
+
+    GAP_LOGO_TITLE = 44
+    GAP_TITLE_LINES = -10
+    GAP_TITLE_SUB = 30
+    SUB_H = 34
+
+    total_h = (
+        logo_s.height + GAP_LOGO_TITLE
+        + sum(h.height for h in headlines) + GAP_TITLE_LINES * (len(headlines) - 1)
+        + GAP_TITLE_SUB + SUB_H
+    )
+    y = (LH - total_h) // 2
+
+    canvas.alpha_composite(logo_s, ((LW - logo_s.width) // 2, y))
+    y += logo_s.height + GAP_LOGO_TITLE
+
+    for headline in headlines:
+        canvas.alpha_composite(headline, ((LW - headline.width) // 2, y))
+        y += headline.height + GAP_TITLE_LINES
+    y += GAP_TITLE_SUB
+
     sw = d.textlength(sub, font=f_sub)
     d.text(((LW - sw) / 2, y), sub, font=f_sub, fill=GOLD_DEEP)
 
@@ -205,7 +319,57 @@ def _wrap_lines(text, font, draw, max_w):
     return lines
 
 
-def build_deepdive_caption(out_dir: Path, idx: int, text: str, emphasis_words: list,
+def split_narration_pages(text: str, max_chars: int = 42) -> list:
+    """딥다이브 나레이션(20~30초, 110~160자)을 문장 단위로 쪼개 화면 전환용 페이지
+    목록을 만든다. 2026-09-01 사용자 지적: "긴 대사를 한 화면으로 보여주나" — 기존엔
+    나레이션 전체를 캡션 이미지 1장으로 만들어 처음부터 끝까지 고정 표시했다. 문장
+    종결 어미(다/요/죠 + .!?) 기준으로 나누고, 문장 하나가 너무 길면 쉼표 기준으로 더
+    쪼개고, 너무 짧은 문장은 다음 문장과 합쳐 자연스러운 길이의 페이지로 만든다."""
+    import re
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()]
+    if not sentences:
+        return [text.strip()] if text.strip() else [""]
+
+    expanded = []
+    for s in sentences:
+        if len(s) <= max_chars:
+            expanded.append(s)
+            continue
+        parts, buf = s.split(", "), ""
+        for p in parts:
+            trial = f"{buf}, {p}" if buf else p
+            if len(trial) <= max_chars or not buf:
+                buf = trial
+            else:
+                expanded.append(buf)
+                buf = p
+        if buf:
+            expanded.append(buf)
+
+    pages, buf = [], ""
+    for s in expanded:
+        if not buf:
+            buf = s
+        elif len(buf) + 1 + len(s) <= max_chars:
+            buf = f"{buf} {s}"
+        else:
+            pages.append(buf)
+            buf = s
+    if buf:
+        pages.append(buf)
+    return pages
+
+
+def allocate_page_durations(pages: list, total_duration: float, min_dur: float = 1.6) -> list:
+    """페이지별 표시 시간을 글자 수 비례로 배분(단어 단위 STT 정렬이 없으므로 문자 수를
+    근사 지표로 사용) — 합이 정확히 total_duration이 되도록 마지막에 정규화한다."""
+    total_chars = sum(len(p) for p in pages) or 1
+    raw = [max(min_dur, total_duration * len(p) / total_chars) for p in pages]
+    scale = total_duration / sum(raw) if sum(raw) > 0 else 1.0
+    return [d * scale for d in raw]
+
+
+def build_deepdive_caption(out_dir: Path, idx, text: str, emphasis_words: list,
                             max_width: int = 1500, font_size: int = 42, min_font_size: int = 28,
                             max_lines: int = 2) -> Path:
     """딥다이브 나레이션 자막 — 강조단어만 골드 하이라이트색+살짝 크게 (다른 채널들의
