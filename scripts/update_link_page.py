@@ -2,14 +2,22 @@
 
 실패해도(권한/네트워크 문제) 파이프라인 전체를 막으면 안 되므로, 호출하는 쪽에서
 예외를 잡아 경고만 남기고 넘어가도록 설계됨 — 이 스크립트 자체는 그냥 실패시 예외를 던진다.
+
+2026-09-02: 정적 카드 HTML을 직접 이어붙이던 방식(무한정 스크롤 + 이미지 없음, 검색
+불가)에서 index.html이 `const ITEMS = [...]` 데이터 배열 + JS 렌더링(검색/더보기/이미지
+폴백 아이콘) 구조로 바뀜에 따라 삽입 로직도 함께 갱신. 이제 새 카드는 ITEMS 배열에
+객체 하나를 끼워 넣는 방식이고, 배열 안에서의 위치는 상관없음(페이지가 rank 기준
+내림차순으로 정렬해서 그림) — 그래서 항상 `const ITEMS = [` 바로 다음에 꽂는다.
 """
 import argparse
+import json
 import re
 import subprocess
 import tempfile
 from pathlib import Path
 
 REPO_URL = "https://github.com/reintroka/sidejoblab-links.git"
+ITEMS_MARKER = "const ITEMS = [\n"
 
 
 def run(cmd, cwd=None):
@@ -31,57 +39,44 @@ def push_with_retry(repo_dir, max_tries: int = 3) -> None:
             run(["git", "-C", repo_dir, "rebase", "origin/main"])
 
 
-def next_ordinal_label(html: str) -> str:
-    """2026-08-27: 예전엔 "첫/두/세.../열 번째"처럼 순우리말 수사를 하드코딩된 목록
-    (10개까지)에서 골라 썼는데, 10개를 넘으면 계속 "열 번째"만 반복되는 버그가 있었고
-    (사용자가 "숫자가 커지면 어쩔라고 그래" 지적으로 발견), 애초에 순우리말 수사는
-    숫자가 커질수록(예: "백서른두 번째") 아라비아 숫자보다 훨씬 길어져서 카드 태그
-    공간에 안 맞을 위험도 있었음. 숫자+번째로 교체 — 몇 개가 쌓여도 짧고 스케일됨.
-
-    2026-08-28: "len(labels) + 1"(고정카드=1번째로 이미 세어짐 가정)이 실제로는 틀려서
-    카드가 9번째로 중복 발급되는 사고가 났다(사용자가 "10번째 실험인데 9번째로 잘못
-    올라감" 지적으로 발견) — 고정카드는 "tag num"이 아니라 "tag pin"이라 애초에
-    labels에 안 잡히므로 +1 가정 자체가 틀렸었음. 텍스트가 아니라 실제 박혀있는
-    숫자 중 최댓값+1로 계산하도록 바꿔서, 카운트 가정 없이 항상 다음 번호를 구한다."""
-    nums = [int(n) for n in re.findall(r'class="tag num">(\d+)번째 실험', html)]
-    count = (max(nums) if nums else 1) + 1
-    return f"{count}번째"
+def next_rank(html: str) -> int:
+    """ITEMS 배열에 실제로 박혀있는 rank 값 중 최댓값+1. 텍스트 개수를 세지 않고 값
+    자체의 최댓값을 쓰는 이유는 과거 개수 기반 계산에서 고정카드 포함/제외를 헷갈려
+    번호가 중복 발급된 사고가 있었기 때문(구버전 next_ordinal_label 참고)."""
+    nums = [int(n) for n in re.findall(r"rank:\s*(\d+)", html)]
+    return (max(nums) if nums else 1) + 1
 
 
-def add_card(product_name: str, price: str, coupang_url: str, hook_line: str):
+def add_card(product_name: str, price: str, coupang_url: str, hook_line: str, image_url: str = ""):
     with tempfile.TemporaryDirectory() as tmp:
         run(["git", "clone", REPO_URL, tmp])
         index_path = Path(tmp) / "index.html"
         html = index_path.read_text(encoding="utf-8")
 
-        label = next_ordinal_label(html)
-        new_card = f"""      <a class="card" href="{coupang_url}" target="_blank" rel="noopener sponsored">
-        <span class="tag num">{label} 실험</span>
-        <p class="title">{product_name}</p>
-        <p class="sub">{hook_line} <span class="price">{price}</span></p>
-      </a>
+        if ITEMS_MARKER not in html:
+            raise RuntimeError("index.html에서 삽입 위치(const ITEMS = [)를 찾지 못했습니다.")
 
-"""
-        # 자소서 프롬프트팩(핵심 상품)은 항상 목록 맨 위에 고정돼야 함(class="card pinned").
-        # 새 카드를 그냥 <div class="list"> 바로 다음에 꽂으면 고정 카드보다 위로 밀려나므로,
-        # 고정 카드가 있으면 그 블록 바로 다음에, 없으면 리스트 맨 위에 삽입한다.
-        pinned_match = re.search(r'( {6}<a class="card pinned".*?</a>\n\n)', html, re.S)
-        if pinned_match:
-            insert_after = pinned_match.group(1)
-            html = html.replace(insert_after, insert_after + new_card, 1)
-        else:
-            marker = '<div class="list">\n'
-            if marker not in html:
-                raise RuntimeError("index.html에서 삽입 위치(<div class=\"list\">)를 찾지 못했습니다.")
-            html = html.replace(marker, marker + new_card, 1)
+        rank = next_rank(html)
+        fields = [
+            f"rank: {rank}",
+            f"url: {json.dumps(coupang_url, ensure_ascii=False)}",
+        ]
+        if image_url:
+            fields.append(f"image: {json.dumps(image_url, ensure_ascii=False)}")
+        fields.append(f"title: {json.dumps(product_name, ensure_ascii=False)}")
+        fields.append(f"sub: {json.dumps(hook_line, ensure_ascii=False)}")
+        fields.append(f"price: {json.dumps(price, ensure_ascii=False)}")
+        new_item = "    { " + ", ".join(fields) + " },\n"
+
+        html = html.replace(ITEMS_MARKER, ITEMS_MARKER + new_item, 1)
         index_path.write_text(html, encoding="utf-8")
 
         run(["git", "-C", tmp, "add", "index.html"])
         run(["git", "-C", tmp, "-c", "user.email=bot@shopping-paradise.local",
              "-c", "user.name=shopping-paradise-bot", "commit", "-m",
-             f"Add {product_name} ({label} 실험) product card"])
+             f"Add {product_name} ({rank}번째 실험) product card"])
         push_with_retry(tmp)
-    print(f"[update_link_page] 링크 페이지 업데이트 완료: {product_name} ({label} 실험)")
+    print(f"[update_link_page] 링크 페이지 업데이트 완료: {product_name} ({rank}번째 실험)")
 
 
 if __name__ == "__main__":
@@ -90,5 +85,6 @@ if __name__ == "__main__":
     p.add_argument("--price", required=True)
     p.add_argument("--coupang-url", required=True)
     p.add_argument("--hook-line", required=True)
+    p.add_argument("--image-url", default="", help="쿠팡 상품 원본 이미지 URL (product['productImage']). 없으면 페이지가 키워드 기반 이모지로 대체함.")
     args = p.parse_args()
-    add_card(args.product_name, args.price, args.coupang_url, args.hook_line)
+    add_card(args.product_name, args.price, args.coupang_url, args.hook_line, args.image_url)

@@ -248,6 +248,7 @@ def main():
     # 10. 링크 페이지 업데이트 (부가)
     soft_step("링크 페이지 업데이트", lambda: update_link_page.add_card(
         product["productName"][:20], f"{product['productPrice']:,}원대", coupang_url, script_data["hook_speech"],
+        image_url=product["productImage"],
     ))
 
     # 11. 발행 기록 추가 (롱폼 자동 컴파일 판단용)
