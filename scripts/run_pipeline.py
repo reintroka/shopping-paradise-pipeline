@@ -197,12 +197,13 @@ def main():
     # 7. 유튜브 업로드 (필수)
     video_id_path = work_dir / "video_id.json"
     coupang_url = product.get("shortUrl") or product["productUrl"]
+    tags = upload_youtube.build_tags(product)
     run([
         "python3", str(HERE / "upload_youtube.py"),
         "--video", str(final_video),
         "--title", script_data["youtube_title"],
         "--description", script_data["youtube_description_intro"],
-        "--tags", "쇼핑하울,제품추천,Shorts",
+        "--tags", ",".join(tags),
         "--coupang-url", coupang_url,
         "--out", str(video_id_path),
     ])

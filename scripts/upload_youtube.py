@@ -25,6 +25,27 @@ COUPANG_DISCLOSURE = "이 포스팅은 쿠팡 파트너스 활동의 일환으�
 
 GCS_BACKUP_BUCKET = "shopping-paradise-daily-raw-luith"
 
+BASE_SHORT_TAGS = [
+    "쇼핑하울", "제품추천", "가성비템", "신상품리뷰", "실속템",
+    "온라인쇼핑", "꿀템", "쿠팡추천", "인기상품", "Shorts",
+]
+
+
+def build_tags(product: dict) -> list[str]:
+    """기존엔 태그가 쇼핑하울/제품추천/Shorts 3개로 고정돼 있었다 — 검색 노출
+    범위를 넓히려고 채널 공통 태그 10개에 이번 상품의 카테고리 키워드와 상품명을
+    더한다."""
+    tags, seen = [], set()
+    candidates = BASE_SHORT_TAGS + [product.get("keyword", ""), product.get("productName", "")[:20]]
+    for t in candidates:
+        # run_pipeline.py가 이 리스트를 ",".join()해서 --tags로 넘기므로, 상품명에 든
+        # 쉼표(예: "..., White, 1개")가 태그를 잘못 쪼개지 않도록 미리 제거한다.
+        t = t.replace(",", " ").strip()
+        if t and t not in seen:
+            seen.add(t)
+            tags.append(t)
+    return tags
+
 
 def _backup_to_gcs(video_id: str, local_path: str) -> None:
     """업로드 성공한 mp4를 video_id 키로 GCS에 백업(3일 후 자동삭제 — 버킷
