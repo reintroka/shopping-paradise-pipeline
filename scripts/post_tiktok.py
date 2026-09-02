@@ -32,7 +32,9 @@ TOKEN_FILE = "tiktok_token.json"
 TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 INBOX_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
 STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
-CHUNK_SIZE = 10 * 1024 * 1024  # 10MB, TikTok 허용 범위(5MB~64MB) 안에서 여유있게
+CHUNK_SIZE = 10 * 1024 * 1024  # 여러 청크로 나눌 때 쓰는 기본 청크 크기(TikTok 허용 범위 5MB~64MB 안)
+MIN_CHUNK_SIZE = 5 * 1024 * 1024  # TikTok 최소 청크 크기(마지막 청크는 예외)
+SINGLE_CHUNK_MAX_VIDEO_SIZE = 64 * 1024 * 1024  # 이 이하 영상은 TikTok 규칙상 반드시 단일 청크
 
 
 def _http_error_with_body(e: urllib.error.HTTPError) -> RuntimeError:
@@ -72,9 +74,26 @@ def refresh_access_token() -> dict:
     return data
 
 
+def _plan_chunks(video_size: int) -> tuple[int, int]:
+    """TikTok 청크 규칙에 맞는 (chunk_size, total_chunk_count)를 계산한다.
+    - 영상이 64MB 이하면 반드시 단일 청크(chunk_size=video_size)여야 한다.
+    - 64MB를 초과하면 CHUNK_SIZE 단위로 나누되, 마지막 청크가 최소 청크 크기(5MB)보다
+      작아지지 않도록 청크 수를 조정한다(마지막 청크만 더 커지는 것은 허용됨)."""
+    if video_size <= SINGLE_CHUNK_MAX_VIDEO_SIZE:
+        return video_size, 1
+    total_chunk_count = video_size // CHUNK_SIZE
+    remainder = video_size - total_chunk_count * CHUNK_SIZE
+    if remainder == 0:
+        pass
+    elif remainder < MIN_CHUNK_SIZE:
+        total_chunk_count -= 1  # 남는 조각을 마지막 청크에 합침
+    else:
+        total_chunk_count += 1
+    return CHUNK_SIZE, total_chunk_count
+
+
 def init_inbox_upload(access_token: str, video_size: int) -> dict:
-    total_chunk_count = max(1, (video_size + CHUNK_SIZE - 1) // CHUNK_SIZE)
-    chunk_size = video_size if total_chunk_count == 1 else CHUNK_SIZE
+    chunk_size, total_chunk_count = _plan_chunks(video_size)
     body = json.dumps({
         "source_info": {
             "source": "FILE_UPLOAD",
@@ -95,20 +114,22 @@ def init_inbox_upload(access_token: str, video_size: int) -> dict:
         raise _http_error_with_body(e) from None
     if data.get("error", {}).get("code") not in (None, "ok"):
         raise RuntimeError(f"업로드 초기화 실패: {data}")
-    return data["data"]
+    result = data["data"]
+    # upload_video가 여기서 실제로 쓴 chunk_size/total_chunk_count를 그대로 넘겨받아
+    # 동일한 기준으로 청크 경계를 계산하도록 함께 반환한다(중복 계산으로 인한 불일치 방지).
+    result["chunk_size"] = chunk_size
+    result["total_chunk_count"] = total_chunk_count
+    return result
 
 
-def upload_video(upload_url: str, video_path: Path, video_size: int) -> None:
+def upload_video(upload_url: str, video_path: Path, video_size: int, chunk_size: int, total_chunk_count: int) -> None:
     with open(video_path, "rb") as f:
         video_bytes = f.read()
-    total_chunk_count = max(1, (video_size + CHUNK_SIZE - 1) // CHUNK_SIZE)
-    if total_chunk_count == 1:
-        chunks = [(0, video_size - 1, video_bytes)]
-    else:
-        chunks = []
-        for start in range(0, video_size, CHUNK_SIZE):
-            end = min(start + CHUNK_SIZE, video_size) - 1
-            chunks.append((start, end, video_bytes[start : end + 1]))
+    chunks = []
+    for i in range(total_chunk_count):
+        start = i * chunk_size
+        end = min(start + chunk_size, video_size) - 1
+        chunks.append((start, end, video_bytes[start : end + 1]))
 
     for start, end, chunk in chunks:
         req = urllib.request.Request(
@@ -153,7 +174,10 @@ def main():
     access_token = token_data["access_token"]
 
     init_data = init_inbox_upload(access_token, video_size)
-    upload_video(init_data["upload_url"], video_path, video_size)
+    upload_video(
+        init_data["upload_url"], video_path, video_size,
+        init_data["chunk_size"], init_data["total_chunk_count"],
+    )
 
     # 처리 상태를 잠깐 확인(실패해도 치명적이지 않음 — 이미 업로드는 끝난 상태)
     time.sleep(5)

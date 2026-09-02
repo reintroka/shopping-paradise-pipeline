@@ -69,13 +69,21 @@ def _push_with_retry(repo_dir: str, max_tries: int = 3) -> None:
 
 
 def save(filename: str, data: dict) -> None:
-    """secrets 저장소에서 filename만 갱신 후 커밋+푸시 (다른 파일은 그대로 보존)."""
+    """secrets 저장소에서 filename만 갱신 후 커밋+푸시 (다른 파일은 그대로 보존).
+    저장할 내용이 기존과 동일해 커밋할 변경사항이 없으면(예: refresh_token이 회전되지
+    않은 경우) "nothing to commit"으로 조용히 넘어간다 — push도 생략."""
     with tempfile.TemporaryDirectory() as tmp:
         _run(["git", "clone", _authenticated_repo_url(), tmp])
         (Path(tmp) / filename).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         _run(["git", "add", filename], cwd=tmp)
-        _run([
-            "git", "-c", "user.email=bot@shopping-paradise.local",
-            "-c", "user.name=shopping-paradise-bot", "commit", "-q", "-m", f"update {filename}",
-        ], cwd=tmp)
+        try:
+            _run([
+                "git", "-c", "user.email=bot@shopping-paradise.local",
+                "-c", "user.name=shopping-paradise-bot", "commit", "-q", "-m", f"update {filename}",
+            ], cwd=tmp)
+        except subprocess.CalledProcessError as e:
+            output = f"{e.stdout or ''}{e.stderr or ''}"
+            if "nothing to commit" in output:
+                return
+            raise
         _push_with_retry(tmp)
