@@ -141,10 +141,30 @@ def _build_deepdive_backdrop(frame_path: Path, out_path: Path):
          "-frames:v", "1", "-q:v", "2", str(out_path)])
 
 
+def _fetch_gcs_product_image(video_id: str, out_path: Path) -> bool:
+    """upload_youtube.backup_product_image()가 발행 시점에 영구 백업해둔 상품사진을
+    가져온다(2026-09-02 도입) — 쿠팡 CDN URL이 만료되기 전에 이미 우리 버킷에 저장해둔
+    원본이므로, 아래 _download_product_image()의 URL 재다운로드보다 항상 먼저
+    시도한다. 옛 발행분(백업 도입 이전)엔 객체가 없으므로 그때만 False."""
+    try:
+        from google.cloud import storage
+
+        client = storage.Client()
+        bucket = client.bucket(upload_youtube.GCS_BACKUP_BUCKET)
+        blob = bucket.blob(f"products/{video_id}.jpg")
+        if not blob.exists():
+            return False
+        blob.download_to_filename(str(out_path))
+        return True
+    except Exception as exc:
+        print(f"[compile_longform] GCS 상품사진 백업 조회 실패: {exc}")
+        return False
+
+
 def _download_product_image(url: str, out_path: Path) -> bool:
-    """shorts_log.json에 저장된 쿠팡 원본 상품사진 URL을 내려받는다. 실패하면(URL
-    만료, 네트워크 오류 등) False를 반환해 build_longform이 영상 프레임 캡처 폴백으로
-    넘어가게 한다."""
+    """shorts_log.json에 저장된 쿠팡 원본 상품사진 URL을 내려받는다(GCS 백업이 없는
+    옛 발행분 전용 폴백). 실패하면(URL 만료, 네트워크 오류 등) False를 반환해
+    build_longform이 영상 프레임 캡처 폴백으로 넘어가게 한다."""
     try:
         import urllib.request
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -258,14 +278,16 @@ def build_longform(entries: list, clip_paths: dict, work_dir: Path, vol: int) ->
         _static_segment(transition_img, TRANSITION_DUR, transition_seg)
         pieces.append(transition_seg)
 
+        product_jpg = work_dir / f"product{i}.jpg"
+        got_photo = _fetch_gcs_product_image(e["video_id"], product_jpg)
+        if not got_photo and e.get("product_image"):
+            got_photo = _download_product_image(e["product_image"], product_jpg)
+
         backdrop_path = None
-        product_image_url = e.get("product_image")
-        if product_image_url:
-            product_jpg = work_dir / f"product{i}.jpg"
-            if _download_product_image(product_image_url, product_jpg):
-                backdrop_path = longform_graphics.build_deepdive_product_backdrop(
-                    work_dir, product_jpg, e["product_name"], f"{e['price']:,}원", i,
-                )
+        if got_photo:
+            backdrop_path = longform_graphics.build_deepdive_product_backdrop(
+                work_dir, product_jpg, e["product_name"], f"{e['price']:,}원", i,
+            )
         if backdrop_path is None:
             frame_path = work_dir / f"frame{i}.jpg"
             _extract_frame(clip_path, frame_path)

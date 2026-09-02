@@ -65,6 +65,26 @@ def _backup_to_gcs(video_id: str, local_path: str) -> None:
         print(f"[경고] GCS 백업 실패, 건너뜁니다: {exc}")
 
 
+def backup_product_image(video_id: str, local_path) -> None:
+    """숏폼 발행 시점에 이미 로컬로 내려받아둔 쿠팡 상품사진(product_image_path)을
+    같은 버킷(products/ 프리픽스)에 영구 백업. 기존엔 shorts_log.json에 쿠팡 원본
+    URL만 저장해뒀다가 롱폼 제작 시점(최대 3일 뒤)에 재다운로드했는데, 쿠팡 CDN URL이
+    그 사이 만료되거나 네트워크 오류가 나면 실패했다(사용자 지적: "작업 시 들어간
+    이미지를 저장해두면 되잖아, 나중에 다시 호출할 필요 없이"). 이 버킷은 이미
+    7일 라이프사이클이라 3일 주기 롱폼 제작 전에 지워질 위험은 없다. 실패해도 발행
+    자체는 이미 끝났으니 예외를 삼키고 경고만 남긴다."""
+    try:
+        from google.cloud import storage
+
+        client = storage.Client()
+        bucket = client.bucket(GCS_BACKUP_BUCKET)
+        blob = bucket.blob(f"products/{video_id}.jpg")
+        blob.upload_from_filename(str(local_path), content_type="image/jpeg")
+        print(f"[gcs백업] products/{video_id}.jpg 업로드 완료")
+    except Exception as exc:
+        print(f"[경고] 상품사진 GCS 백업 실패, 건너뜁니다: {exc}")
+
+
 def get_credentials():
     creds = Credentials(
         token=None,

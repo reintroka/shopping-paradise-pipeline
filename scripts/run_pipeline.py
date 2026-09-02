@@ -211,6 +211,7 @@ def main():
     video_id = video_info["video_id"]
     global uploaded_video_url
     uploaded_video_url = video_info["url"]
+    upload_youtube.backup_product_image(video_id, product_image_path)
 
     # 8. X 포스트 (부가) — 2026-08-27: 쿠팡 상품 이미지 첨부 추가
     soft_step("X 포스트", lambda: run_captured([
