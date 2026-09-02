@@ -85,7 +85,7 @@
     "video_id": "Ivjp0WyNsVY",
     "url": "https://youtu.be/Ivjp0WyNsVY",
     "coupang_url": "https://link.coupang.com/a/gDtZHrHetU",
-    "compiled_in": null
+    "compiled_in": "gAadLvzNTz8"
   },
   {
     "date": "2026-08-31",
@@ -96,7 +96,7 @@
     "video_id": "1UqRUwHRLvA",
     "url": "https://youtu.be/1UqRUwHRLvA",
     "coupang_url": "https://link.coupang.com/a/gEEIGAHGsm",
-    "compiled_in": null
+    "compiled_in": "gAadLvzNTz8"
   },
   {
     "date": "2026-08-31",
@@ -107,7 +107,7 @@
     "video_id": "bPb9mLA_JTI",
     "url": "https://youtu.be/bPb9mLA_JTI",
     "coupang_url": "https://link.coupang.com/a/gE8YBcluOy",
-    "compiled_in": null
+    "compiled_in": "gAadLvzNTz8"
   },
   {
     "date": "2026-09-01",
@@ -118,7 +118,7 @@
     "video_id": "8RRJJTgHQJg",
     "url": "https://youtu.be/8RRJJTgHQJg",
     "coupang_url": "https://link.coupang.com/a/gGjE3PQ7BQ",
-    "compiled_in": null
+    "compiled_in": "gAadLvzNTz8"
   },
   {
     "date": "2026-09-01",
@@ -129,7 +129,7 @@
     "video_id": "EAfz89Nlpr0",
     "url": "https://youtu.be/EAfz89Nlpr0",
     "coupang_url": "https://link.coupang.com/a/gGNTEjWObs",
-    "compiled_in": null
+    "compiled_in": "gAadLvzNTz8"
   },
   {
     "date": "2026-09-02",
@@ -140,7 +140,7 @@
     "video_id": "lfRuAazvstI",
     "url": "https://youtu.be/lfRuAazvstI",
     "coupang_url": "https://link.coupang.com/a/gHYvqdTGkm",
-    "compiled_in": null,
+    "compiled_in": "gAadLvzNTz8",
     "specs": [
       {
         "title": "9종 구성",
@@ -156,5 +156,31 @@
       }
     ],
     "product_image": "https://ads-partners.coupang.com/image1/QKvqyfKHEPVVgmxUQBTJokM2gJMZrxeshxU59YQn52s0STPJSU04U2sYX64tB281ZOabDEohbUf1cojLCoCzbHHMJrI78gHY0XqqUxj30KyDs8KnbSL7IfTr0hlOd3CcIowDaCxy1ROcILydKUjQK6i2h7aZ9Mj6I0AVvordpe2riXAW3IIrFr2g-nEriy1_fpsIc7OWMGnpaGovasiczd_4tL__OU5g35kvPfqrcoJ6Je9BoF_Dbmjizq6ZsS-kzBDbMEqnPojWCpiASSoABQ9eP6mPOoMm9QqflunV4Kp3bkYn3v3wqoKYYQzMPoPjjySMDA=="
+  },
+  {
+    "date": "2026-09-02",
+    "datetime_kst": "2026-09-02T20:09:49.606732+09:00",
+    "character": "male",
+    "product_name": "아웃도어 테이블 의자 세트 초경량 접",
+    "price": 53800,
+    "video_id": "YIrWjfFziP4",
+    "url": "https://youtu.be/YIrWjfFziP4",
+    "coupang_url": "https://link.coupang.com/a/gIwSnDUA9s",
+    "compiled_in": null,
+    "specs": [
+      {
+        "title": "초경량",
+        "body": "부피와 무게를 줄인 폴딩 구조"
+      },
+      {
+        "title": "세트 구성",
+        "body": "테이블과 의자가 한번에"
+      },
+      {
+        "title": "가성비",
+        "body": "오만삼천팔백원의 합리적인 가격"
+      }
+    ],
+    "product_image": "https://ads-partners.coupang.com/image1/LVh1z3kcyDZ8aYmgLQ3nIW4LByp1xu5VXc6xRm1q4gQqlwA_-J1Vo9e2zLjqZPjXXUjpsSdD6NxybUFfSiQt0BJqH4WYIKiNiBwEZb3hM7Iksc8gqYkUwM_rXQG3dlk_zgdv6EQ0awZwKXzSYCBYaZJNNp4mAKBtID7EvBSKin1_EC-rYFETjVyM54eqNhlMc9hApSnOidsY2lOVj8k-sv5-PGzuVfPZCPELogA83uz85wnVN8iGw_SfY8HQdnsbH-y6T30r6Nf4qCXIosPq_SGDvzYbsNuZcVRxQAF7KD419_mxlyg6Zny5j8DmaH6PqDV52FY="
   }
 ]
