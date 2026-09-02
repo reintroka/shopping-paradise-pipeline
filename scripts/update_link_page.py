@@ -8,6 +8,12 @@
 폴백 아이콘) 구조로 바뀜에 따라 삽입 로직도 함께 갱신. 이제 새 카드는 ITEMS 배열에
 객체 하나를 끼워 넣는 방식이고, 배열 안에서의 위치는 상관없음(페이지가 rank 기준
 내림차순으로 정렬해서 그림) — 그래서 항상 `const ITEMS = [` 바로 다음에 꽂는다.
+
+이 스크립트는 실행마다 저장소를 새로 clone하는데, 매번 전체 커밋 히스토리를 받으면
+카드가 수백~수천 개 쌓였을 때(=커밋도 그만큼 쌓였을 때) clone 자체가 계속 느려진다.
+우리는 최신 index.html 내용만 있으면 되고 과거 히스토리는 필요 없으므로 --depth 1로
+얕은 clone을 써서 이 파이프라인의 소요시간이 카드 개수와 무관하게 항상 일정하게 유지
+되도록 한다(사용자가 "나중에 상품이 1000개 넘어가면?" 질문한 계기로 선제 반영).
 """
 import argparse
 import json
@@ -49,7 +55,7 @@ def next_rank(html: str) -> int:
 
 def add_card(product_name: str, price: str, coupang_url: str, hook_line: str, image_url: str = ""):
     with tempfile.TemporaryDirectory() as tmp:
-        run(["git", "clone", REPO_URL, tmp])
+        run(["git", "clone", "--depth", "1", REPO_URL, tmp])
         index_path = Path(tmp) / "index.html"
         html = index_path.read_text(encoding="utf-8")
 
