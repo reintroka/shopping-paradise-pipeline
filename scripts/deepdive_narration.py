@@ -12,6 +12,9 @@ import urllib.request
 from pathlib import Path
 
 import google_tts
+import korean_number
+
+PRICE_TOKEN = "[[PRICE]]"
 
 PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 롱폼 다이제스트의 내레이터입니다.
 아래 상품에 대해 20~30초 분량(공백 포함 110~160자)의 리뷰형 코멘트를 자연스러운
@@ -21,12 +24,16 @@ PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 롱폼 다이제스�
 
 이 코멘트는 음성 나레이션(TTS)으로 재생되는 동시에 화면 자막으로도 표시되므로,
 **같은 내용을 숫자 표기만 다르게 한 두 가지 버전**으로 작성하세요:
-- narration_spoken: TTS가 읽을 버전. 가격/용량 등 모든 숫자를 반드시 한글 발음으로
-  풀어써야 합니다(예: "722,650원"→"칠십이만이천육백오십원", "16GB"→"십육 기가",
-  "15.6인치"→"십오점육 인치"). 숫자를 원래 표기 그대로 두면 TTS가 잘못 읽습니다.
+- narration_spoken: TTS가 읽을 버전. 용량/인치 등 숫자는 한글 발음으로 풀어써야
+  합니다(예: "16GB"→"십육 기가", "15.6인치"→"십오점육 인치"). 단, **가격만은 절대
+  직접 숫자를 계산해서 풀어쓰지 말고, 가격이 들어갈 자리에 토씨 하나 바꾸지 말고
+  literal 문자열 "{price_token}" 를 그대로 넣으세요** (예: "이 가격에 {price_token}이면
+  괜찮은 구성이에요"). 큰 자릿수 가격을 직접 한글로 옮기면 자릿수를 실수하기 쉬워서
+  이 부분만 코드가 별도로 정확하게 계산해 넣습니다.
 - narration_caption: 화면 자막에 표시될 버전. narration_spoken과 문장 구조/내용은
-  완전히 동일하되, 숫자만 원래 표기(가격 콤마, GB, 인치 등)로 돌려쓰세요 — 화면에서는
-  풀어쓴 한글 숫자가 오히려 어색하고 길어 보입니다.
+  완전히 동일하되, 가격 자리에는 "{price_token}"이 아니라 원래 숫자 표기({price})를
+  쓰고, 그 외 숫자(GB, 인치 등)도 원래 표기로 돌려쓰세요 — 화면에서는 풀어쓴 한글
+  숫자가 오히려 어색하고 길어 보입니다.
 
 이 코멘트에서 시청자가 화면 자막으로 볼 때 강조되면 좋을 핵심 단어/짧은 구 3~5개도
 따로 뽑아주세요(narration_caption 본문에 실제로 등장하는 표현 그대로, 토씨 하나
@@ -69,14 +76,24 @@ def generate_and_synthesize(product_name: str, price: int, specs: list[tuple] | 
     상품명/가격만으로 생성한다 — 구체성은 떨어지지만 파이프라인이 막히지는 않는다.
     """
     specs_text = "; ".join(f"{t}: {v}" for t, v in specs) if specs else "(정보 없음, 상품명/가격 기준으로 일반적인 장점 위주로 작성)"
+    price_digits = f"{price:,}원"
     prompt = PROMPT_TEMPLATE.format(
-        product_name=product_name, price=f"{price:,}원", specs_text=specs_text,
+        product_name=product_name, price=price_digits, specs_text=specs_text, price_token=PRICE_TOKEN,
     )
     text = _call_gemini(prompt)
     data = _parse_json(text)
     narration_spoken = data["narration_spoken"]
     narration_caption = data["narration_caption"]
     emphasis_words = data.get("emphasis_words", [])
+
+    # 2026-09-02: 가격을 LLM이 직접 한글로 계산해 풀어쓰다가 200만원대를 20만원대로
+    # 잘못 발음하는 사고 발생(노트북 상품) — 가격 변환은 여기서 코드로 결정적으로
+    # 채워 넣고, LLM에게는 자리표시자만 남기도록 프롬프트를 바꿨다.
+    if PRICE_TOKEN not in narration_spoken:
+        print(f"  [경고] narration_spoken에 {PRICE_TOKEN} 자리표시자가 없습니다 — "
+              f"모델이 지침을 어기고 가격을 직접 풀어썼을 수 있습니다: {narration_spoken[:80]!r}")
+    narration_spoken = narration_spoken.replace(PRICE_TOKEN, korean_number.price_to_korean(price))
+    narration_caption = narration_caption.replace(PRICE_TOKEN, price_digits)
 
     audio_path = work_dir / f"deepdive_narration_{idx}.mp3"
     meta = google_tts.synthesize(narration_spoken, character, audio_path)
