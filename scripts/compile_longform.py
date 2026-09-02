@@ -462,6 +462,25 @@ def check_and_compile():
         e["compiled_in"] = result["video_id"]
     shorts_log.save_log(entries)
 
+    # 2026-09-02: 숏츠는 run_pipeline.py 9단계에서 매번 유튜브 댓글로 쿠팡 링크를
+    # 홍보하는데, 롱폼(compile_longform.py)에는 이 단계가 아예 빠져있었다(발견 계기:
+    # 사용자 질문). 롱폼은 상품 하나가 아니라 6개를 묶은 다이제스트라 개별 쿠팡
+    # 링크 하나로는 안 맞으므로, 전체 상품이 모여 있는 부업실험실 링크 페이지로
+    # 유도한다. 댓글 실패가 이미 성공한 업로드/로그 저장에 영향 주지 않도록 여기서
+    # 직접 예외를 삼킨다(run_pipeline.py soft_step과 동일한 원칙).
+    try:
+        comment_text = (
+            "이 영상에서 소개한 상품들, 전체 링크는 여기서 한 번에 확인하세요 "
+            "\U0001F449 https://reintroka.github.io/sidejoblab-links/"
+        )
+        subprocess.run(
+            ["python3", str(HERE / "post_comment.py"), "--video-id", result["video_id"], "--text", comment_text],
+            check=True,
+        )
+        print("[compile_longform] 유튜브 댓글 등록 완료")
+    except Exception as exc:
+        print(f"[경고] 롱폼 유튜브 댓글 등록 실패, 건너뜁니다: {exc}")
+
     print(f"[compile_longform] 완료: {result['url']}")
     return result
 
