@@ -218,24 +218,63 @@ def build_intro_card(out_dir: Path, vol: int, count: int) -> Path:
     return out_path
 
 
+def _wrap_text(text: str, font, max_w: int, draw: ImageDraw.ImageDraw) -> list[str]:
+    """공백 기준 단어 랩. 공백 없는 단일 토큰이 그 자체로 max_w를 넘으면(모델명 등)
+    글자 단위로 강제 분할해 타일 밖으로 새지 않게 한다."""
+    def split_long_word(word: str) -> list[str]:
+        chunks, cur = [], ""
+        for ch in word:
+            trial = cur + ch
+            if not cur or draw.textlength(trial, font=font) <= max_w:
+                cur = trial
+            else:
+                chunks.append(cur)
+                cur = ch
+        if cur:
+            chunks.append(cur)
+        return chunks
+
+    lines, cur = [], ""
+    for w in text.split(" "):
+        trial = f"{cur} {w}".strip()
+        if not cur or draw.textlength(trial, font=font) <= max_w:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = w if draw.textlength(w, font=font) <= max_w else ""
+            if not cur:
+                lines.extend(split_long_word(w))
+    if cur:
+        lines.append(cur)
+    if len(lines) == 1 and draw.textlength(lines[0], font=font) > max_w:
+        lines = split_long_word(lines[0])
+    return lines
+
+
 def build_thumbnail_collage(out_dir: Path, entries: list, vol: int) -> Path:
     """유튜브 롱폼 썸네일 전용(2026-09-02, 사용자 요청). 텍스트만 있는 인트로 카드를
     그대로 썸네일로 재활용했더니 클릭률 관점에서 밋밋하다는 지적 — 이번 편에 실제로
     다룬 상품 사진을 오른쪽 그리드에 콜라주로 보여주고 왼쪽에 볼드 타이틀을 얹는다.
     새로 다운로드하지 않고 build_longform()이 이미 만들어둔 product{i}.jpg(쿠팡 원본
-    사진, 있으면 우선)나 frame{i}.jpg(원본이 없거나 다운로드 실패해 클립에서 뽑은
-    프레임)를 그대로 재사용한다."""
+    사진)를 재사용한다.
+
+    2026-09-02 수정: 최초 버전은 product{i}.jpg가 없으면 frame{i}.jpg(숏폼 영상
+    중간의 아바타 설명 장면 스크린샷)로 대체했는데, 사용자가 "원본 사진이 없으면
+    그것만 튀지 않냐"고 정확히 지적 — 아바타 얼굴/자막이 찍힌 영상 프레임이 깨끗한
+    상품 사진들 사이에 섞이면 확실히 이질감이 난다. product_image 필드는 2026-09-01
+    부터 저장되기 시작해 그 이전 발행분엔 아예 없을 수 있으므로, 영상 프레임 대신
+    상품명 텍스트 카드로 통일감을 유지한다."""
     canvas = _landscape_canvas(seed=vol * 19 + 5)
     d = ImageDraw.Draw(canvas)
 
     n = len(entries)
-    photos = []
-    for i in range(1, n + 1):
-        for name in (f"product{i}.jpg", f"frame{i}.jpg"):
-            path = out_dir / name
-            if path.exists():
-                photos.append(Image.open(path).convert("RGB"))
-                break
+    tiles_data = []
+    for i, e in enumerate(entries, start=1):
+        product_path = out_dir / f"product{i}.jpg"
+        if product_path.exists():
+            tiles_data.append(("photo", Image.open(product_path).convert("RGB")))
+        else:
+            tiles_data.append(("text", e.get("product_name", "")))
 
     GRID_X0, GRID_Y0 = 700, 90
     GRID_W, GRID_H = LW - GRID_X0 - 60, LH - GRID_Y0 * 2
@@ -244,17 +283,10 @@ def build_thumbnail_collage(out_dir: Path, entries: list, vol: int) -> Path:
     tile_w = (GRID_W - gap * (cols - 1)) // cols
     tile_h = (GRID_H - gap * (rows - 1)) // rows
 
-    for idx, photo in enumerate(photos[:cols * rows]):
+    for idx, (kind, content) in enumerate(tiles_data[:cols * rows]):
         col, row = idx % cols, idx // cols
         x = GRID_X0 + col * (tile_w + gap)
         y = GRID_Y0 + row * (tile_h + gap)
-
-        pw, ph = photo.size
-        scale = max(tile_w / pw, tile_h / ph)
-        nw, nh = int(pw * scale), int(ph * scale)
-        resized = photo.resize((nw, nh), Image.LANCZOS)
-        left, top = (nw - tile_w) // 2, (nh - tile_h) // 2
-        cropped = resized.crop((left, top, left + tile_w, top + tile_h))
 
         shadow = Image.new("RGBA", (tile_w + 20, tile_h + 20), (0, 0, 0, 0))
         ImageDraw.Draw(shadow).rounded_rectangle(
@@ -264,7 +296,28 @@ def build_thumbnail_collage(out_dir: Path, entries: list, vol: int) -> Path:
         mask = Image.new("L", (tile_w, tile_h), 0)
         ImageDraw.Draw(mask).rounded_rectangle([0, 0, tile_w - 1, tile_h - 1], radius=radius, fill=255)
         tile = Image.new("RGBA", (tile_w, tile_h), (0, 0, 0, 0))
-        tile.paste(cropped.convert("RGBA"), (0, 0), mask)
+
+        if kind == "photo":
+            pw, ph = content.size
+            scale = max(tile_w / pw, tile_h / ph)
+            nw, nh = int(pw * scale), int(ph * scale)
+            resized = content.resize((nw, nh), Image.LANCZOS)
+            left, top = (nw - tile_w) // 2, (nh - tile_h) // 2
+            cropped = resized.crop((left, top, left + tile_w, top + tile_h))
+            tile.paste(cropped.convert("RGBA"), (0, 0), mask)
+        else:
+            fill_tile = Image.new("RGBA", (tile_w, tile_h), (236, 224, 200, 255))
+            td = ImageDraw.Draw(fill_tile)
+            f_name = bg.sfont(34, "SemiBold")
+            lines = _wrap_text(content, f_name, tile_w - 56, td)[:3]
+            line_h = f_name.size + 14
+            ty = (tile_h - line_h * len(lines)) // 2
+            for line in lines:
+                tw = td.textlength(line, font=f_name)
+                td.text(((tile_w - tw) / 2, ty), line, font=f_name, fill=GOLD_DEEP)
+                ty += line_h
+            tile.paste(fill_tile, (0, 0), mask)
+
         canvas.alpha_composite(tile, (x, y))
         d.rounded_rectangle([x, y, x + tile_w - 1, y + tile_h - 1], radius=radius, outline=GOLD, width=4)
 
