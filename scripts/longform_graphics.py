@@ -218,6 +218,80 @@ def build_intro_card(out_dir: Path, vol: int, count: int) -> Path:
     return out_path
 
 
+def build_thumbnail_collage(out_dir: Path, entries: list, vol: int) -> Path:
+    """유튜브 롱폼 썸네일 전용(2026-09-02, 사용자 요청). 텍스트만 있는 인트로 카드를
+    그대로 썸네일로 재활용했더니 클릭률 관점에서 밋밋하다는 지적 — 이번 편에 실제로
+    다룬 상품 사진을 오른쪽 그리드에 콜라주로 보여주고 왼쪽에 볼드 타이틀을 얹는다.
+    새로 다운로드하지 않고 build_longform()이 이미 만들어둔 product{i}.jpg(쿠팡 원본
+    사진, 있으면 우선)나 frame{i}.jpg(원본이 없거나 다운로드 실패해 클립에서 뽑은
+    프레임)를 그대로 재사용한다."""
+    canvas = _landscape_canvas(seed=vol * 19 + 5)
+    d = ImageDraw.Draw(canvas)
+
+    n = len(entries)
+    photos = []
+    for i in range(1, n + 1):
+        for name in (f"product{i}.jpg", f"frame{i}.jpg"):
+            path = out_dir / name
+            if path.exists():
+                photos.append(Image.open(path).convert("RGB"))
+                break
+
+    GRID_X0, GRID_Y0 = 700, 90
+    GRID_W, GRID_H = LW - GRID_X0 - 60, LH - GRID_Y0 * 2
+    cols, rows = 3, 2
+    gap, radius = 22, 20
+    tile_w = (GRID_W - gap * (cols - 1)) // cols
+    tile_h = (GRID_H - gap * (rows - 1)) // rows
+
+    for idx, photo in enumerate(photos[:cols * rows]):
+        col, row = idx % cols, idx // cols
+        x = GRID_X0 + col * (tile_w + gap)
+        y = GRID_Y0 + row * (tile_h + gap)
+
+        pw, ph = photo.size
+        scale = max(tile_w / pw, tile_h / ph)
+        nw, nh = int(pw * scale), int(ph * scale)
+        resized = photo.resize((nw, nh), Image.LANCZOS)
+        left, top = (nw - tile_w) // 2, (nh - tile_h) // 2
+        cropped = resized.crop((left, top, left + tile_w, top + tile_h))
+
+        shadow = Image.new("RGBA", (tile_w + 20, tile_h + 20), (0, 0, 0, 0))
+        ImageDraw.Draw(shadow).rounded_rectangle(
+            [10, 14, tile_w + 10, tile_h + 14], radius=radius, fill=(20, 14, 8, 140))
+        canvas.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(10)), (x - 10, y - 10))
+
+        mask = Image.new("L", (tile_w, tile_h), 0)
+        ImageDraw.Draw(mask).rounded_rectangle([0, 0, tile_w - 1, tile_h - 1], radius=radius, fill=255)
+        tile = Image.new("RGBA", (tile_w, tile_h), (0, 0, 0, 0))
+        tile.paste(cropped.convert("RGBA"), (0, 0), mask)
+        canvas.alpha_composite(tile, (x, y))
+        d.rounded_rectangle([x, y, x + tile_w - 1, y + tile_h - 1], radius=radius, outline=GOLD, width=4)
+
+    bg.build_logo_xl(out_dir)
+    logo = Image.open(out_dir / "logo_xl.png").convert("RGBA")
+    logo_w = 260
+    logo_s = logo.resize((logo_w, max(1, int(logo.height * logo_w / logo.width))), Image.LANCZOS)
+    canvas.alpha_composite(logo_s, (70, 90))
+
+    f_eyebrow = bg.sfont(26, "Medium")
+    f_title = bg.sfont(72, "Bold")
+
+    eyebrow = f"VOL.{vol}"
+    eyebrow_y = 90 + logo_s.height + 34
+    bg.draw_tracked(d, (72, eyebrow_y), eyebrow, f_eyebrow, GOLD_DEEP, 8)
+
+    y = eyebrow_y + 50
+    for line in ["이번 주", f"인기템 {n}개"]:
+        headline = _gold_headline_line(line, f_title, tracking=1)
+        canvas.alpha_composite(headline, (58, y))
+        y += headline.height - 10
+
+    out_path = out_dir / "thumbnail_collage.png"
+    canvas.convert("RGB").save(out_path)
+    return out_path
+
+
 def build_chapter_divider(out_dir: Path, idx: int, total: int, product_name: str, price_text: str) -> Path:
     """2026-09-01 재설계: 인트로/아웃트로처럼 배지(고정 top=100)부터 아래로 쌓기만 해서
     위로 쏠려 보였다(사용자 스크린샷 지적: "이건 왜 위로 쏠려있나"). 배지+타이틀블록+

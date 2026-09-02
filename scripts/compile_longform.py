@@ -430,7 +430,10 @@ def check_and_compile():
     longform_path = build_longform(batch, clip_paths, work_dir, vol)
     title, description = build_title_and_description(batch, vol)
     tags = build_tags(batch)
-    thumbnail_path = work_dir / "intro_card.png"  # build_longform()이 이미 만들어둔 인트로 카드
+    # 텍스트만 있는 인트로 카드를 그대로 썸네일로 쓰면 클릭률 관점에서 밋밋하다는
+    # 지적(2026-09-02)으로, build_longform()이 이미 다운로드/추출해둔 상품 사진
+    # (product{i}.jpg/frame{i}.jpg)을 콜라주로 보여주는 전용 썸네일로 교체.
+    thumbnail_path = longform_graphics.build_thumbnail_collage(work_dir, batch, vol)
     result = upload_longform(longform_path, title, description, tags, thumbnail_path)
 
     for e in batch:
