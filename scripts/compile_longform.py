@@ -316,7 +316,25 @@ def build_title_and_description(entries: list, vol: int) -> tuple:
     return title, description
 
 
-def upload_longform(video_path: Path, title: str, description: str) -> dict:
+BASE_LONGFORM_TAGS = [
+    "쇼핑하울", "제품추천", "가전추천", "생활템추천", "인기상품",
+    "쿠팡추천", "가성비템", "신상품리뷰", "실속템", "온라인쇼핑",
+]
+
+
+def build_tags(entries: list) -> list[str]:
+    """기존엔 태그가 3개(쇼핑하울/제품추천/가전추천)로 고정돼 있었다 — 검색 노출
+    범위를 넓히려고 채널 공통 태그 10개에 이번 편에 실제로 다룬 상품명을 더한다."""
+    tags, seen = [], set()
+    for t in BASE_LONGFORM_TAGS + [e["product_name"][:20] for e in entries]:
+        if t not in seen:
+            seen.add(t)
+            tags.append(t)
+    return tags
+
+
+def upload_longform(video_path: Path, title: str, description: str, tags: list[str],
+                     thumbnail_path: Path | None = None) -> dict:
     creds = upload_youtube.get_credentials()
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
@@ -328,7 +346,7 @@ def upload_longform(video_path: Path, title: str, description: str) -> dict:
         raise RuntimeError(f"채널 불일치! 예상: {upload_youtube.EXPECTED_CHANNEL_TITLE}, 실제: {actual_title}")
 
     body = {
-        "snippet": {"title": title, "description": description, "tags": ["쇼핑하울", "제품추천", "가전추천"], "categoryId": "22"},
+        "snippet": {"title": title, "description": description, "tags": tags, "categoryId": "22"},
         "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False, "containsSyntheticMedia": True},
     }
     media = MediaFileUpload(str(video_path), chunksize=-1, resumable=True, mimetype="video/mp4")
@@ -339,6 +357,21 @@ def upload_longform(video_path: Path, title: str, description: str) -> dict:
         if status:
             print(f"업로드 중... {int(status.progress() * 100)}%")
     video_id = response["id"]
+
+    # 기존엔 썸네일 설정 코드가 아예 없어서 유튜브가 영상에서 자동 선택한 프레임이
+    # 그대로 노출되고 있었다 — 이미 만들어둔 인트로 카드(가로 1920x1080, 골드 럭셔리
+    # 톤)를 그대로 재사용해 썸네일로 지정한다. 실패해도 업로드 자체는 이미 끝났으니
+    # 예외를 삼키고 경고만 남긴다.
+    if thumbnail_path and thumbnail_path.exists():
+        try:
+            youtube.thumbnails().set(
+                videoId=video_id,
+                media_body=MediaFileUpload(str(thumbnail_path), mimetype="image/png"),
+            ).execute()
+            print(f"[compile_longform] 썸네일 설정 완료: {thumbnail_path.name}")
+        except Exception as exc:
+            print(f"[경고] 썸네일 설정 실패, 건너뜁니다: {exc}")
+
     return {"video_id": video_id, "url": f"https://youtu.be/{video_id}"}
 
 
@@ -396,7 +429,9 @@ def check_and_compile():
 
     longform_path = build_longform(batch, clip_paths, work_dir, vol)
     title, description = build_title_and_description(batch, vol)
-    result = upload_longform(longform_path, title, description)
+    tags = build_tags(batch)
+    thumbnail_path = work_dir / "intro_card.png"  # build_longform()이 이미 만들어둔 인트로 카드
+    result = upload_longform(longform_path, title, description, tags, thumbnail_path)
 
     for e in batch:
         e["compiled_in"] = result["video_id"]
