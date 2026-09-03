@@ -300,6 +300,13 @@ def post_tweet_with_retry(text: str, media_id: str = None, max_tries: int = 2) -
     raise last_err
 
 
+# 2026-09-03: _truncate_preserving_cta가 문장 끝(CTA)을 지키려 해도, 실제 발행
+# 결과에서 "프로필링크확인" 안내가 계속 빠지는 사고가 재발했다(사용자 확인).
+# truncate 로직은 항상 본문을 "앞에서부터" 예산만큼 채우고 넘치는 뒤쪽만 잘라내므로,
+# 아예 맨 앞에 고정 안내 문구를 붙이면 어떤 truncate/재시도 경로를 타도 항상 살아남는다.
+PROFILE_LINK_PREFIX = "[프로필링크확인] "
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--text", required=True)
@@ -309,5 +316,8 @@ if __name__ == "__main__":
         media_id = upload_media(args.image) if args.image else None
     except urllib.error.HTTPError as e:
         raise _http_error_with_body(e) from None
-    result = post_tweet_with_retry(args.text, media_id)
+    text = args.text
+    if not text.startswith(PROFILE_LINK_PREFIX):
+        text = f"{PROFILE_LINK_PREFIX}{text}"
+    result = post_tweet_with_retry(text, media_id)
     print(json.dumps(result, ensure_ascii=False))
