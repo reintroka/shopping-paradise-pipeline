@@ -28,6 +28,12 @@ from pathlib import Path
 X_POST_HISTORY_PATH = Path(__file__).resolve().parent.parent / "x_post_history.json"
 X_POST_HISTORY_MAX = 12
 
+# upload_youtube.py의 COUPANG_DISCLOSURE와 동일 문구. 인스타/페이스북/X/틱톡 캡션에도
+# 법적 고지 문구가 실제로 노출되도록, LLM 생성에 맡기지 않고 여기서 결정론적으로 붙인다
+# (2026-09-04: 발행된 게시물 캡션에 문구가 누락되어 있던 걸 발견해 추가).
+COUPANG_DISCLOSURE = "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
+X_POST_MAX_LEN = 280
+
 # 2026-08-31: 저사양 모델(gemini-flash-lite-latest)이 "CTA 문구를 매번 다르게
 # 써라" 같은 느슨한 지침을 잘 안 따르고 거의 매번 "지금 프로필에서 바로 확인
 # 가능해요" 류의 동일한 CTA를 반복해서(+ 고정된 해시태그 개수) X가 스팸/중복
@@ -133,6 +139,17 @@ def parse_json_response(text: str) -> dict:
     return json.loads(text)
 
 
+def append_disclosure(text: str, max_len: int | None = None) -> str:
+    """본문 뒤에 빈 줄 하나 띄우고 쿠팡 파트너스 고지 문구를 붙인다.
+    max_len이 주어지면(X 280자 제한 등) 고지 문구가 잘리지 않도록 본문을 먼저 줄인다."""
+    text = text.rstrip()
+    if max_len is not None:
+        budget = max_len - len(COUPANG_DISCLOSURE) - 2  # "\n\n" 두 글자
+        if len(text) > budget:
+            text = text[:budget].rstrip()
+    return f"{text}\n\n{COUPANG_DISCLOSURE}"
+
+
 def load_x_post_history() -> list[str]:
     if X_POST_HISTORY_PATH.exists():
         return json.loads(X_POST_HISTORY_PATH.read_text(encoding="utf-8"))
@@ -165,10 +182,13 @@ def main():
     )
     text = call_gemini(prompt)
     data = parse_json_response(text)
+    if data.get("x_post"):
+        save_x_post_history(history, data["x_post"])  # 고지 문구 붙이기 전 원문으로 이력 저장(중복비교용)
+        data["x_post"] = append_disclosure(data["x_post"], max_len=X_POST_MAX_LEN)
+    if data.get("ig_caption"):
+        data["ig_caption"] = append_disclosure(data["ig_caption"])
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    if data.get("x_post"):
-        save_x_post_history(history, data["x_post"])
     print(f"대본 생성 완료: {args.out}")
 
 
