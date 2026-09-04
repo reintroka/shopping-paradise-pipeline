@@ -242,10 +242,14 @@ def main():
     # 8.6. 틱톡 받은편지함(초안) 전달 (부가) — 앱 심사 전이라 API로 바로 공개
     # 발행은 불가, 계정 소유자가 틱톡 앱 알림에서 직접 게시해야 최종 발행됨.
     tiktok_out_path = work_dir / "tiktok_result.json"
-    soft_step("틱톡 초안 전달", lambda: run_captured([
+    tiktok_ok = soft_step("틱톡 초안 전달", lambda: run_captured([
         "python3", str(HERE / "post_tiktok.py"),
         "--video", str(final_video), "--caption-hint", script_data["x_post"], "--out", str(tiktok_out_path),
     ]))
+    # 틱톡은 API로 캡션을 못 넣어 앱에서 직접 붙여넣어야 하므로, 요약 메시지에 섞이지 않게
+    # 쿠팡 파트너스 고지 문구만 단독 메시지로 보내 바로 복사해 쓸 수 있게 한다.
+    if tiktok_ok and script_data.get("coupang_disclosure"):
+        notify(script_data["coupang_disclosure"])
 
     # 9. 유튜브 댓글 (부가, 재시도 포함)
     comment_text = (

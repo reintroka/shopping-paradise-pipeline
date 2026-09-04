@@ -189,6 +189,9 @@ def main():
         data["x_post"] = append_disclosure(data["x_post"], max_len=X_POST_MAX_LEN)
     if data.get("ig_caption"):
         data["ig_caption"] = append_disclosure(data["ig_caption"])
+    # 틱톡은 API로 캡션을 못 넣어 사람이 앱에서 직접 붙여넣어야 하므로, run_pipeline.py가
+    # 텔레그램으로 이 문구만 단독 메시지로 보낼 수 있게 별도 필드로 저장해둔다.
+    data["coupang_disclosure"] = COUPANG_DISCLOSURE
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     print(f"대본 생성 완료: {args.out}")
