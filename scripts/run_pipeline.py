@@ -13,6 +13,7 @@
   7. 유튜브 공개 업로드 (upload_youtube) — 실패하면 중단(핵심 산출물)
   8. X 포스트 (post_x, 상품 이미지 첨부 + 403 시 문구 변형 1회 재시도) — 실패해도 계속 진행(부가 기능)
   8.5. 인스타그램 Reels 발행 (post_instagram, GitHub Pages 임시 호스팅 경유) — 실패해도 계속 진행
+  8.55. 페이스북 페이지 발행 (post_facebook, 인스타그램과 동일 캡션) — 실패해도 계속 진행
   8.6. 틱톡 받은편지함(초안) 전달 (post_tiktok, 앱 심사 전이라 자동 공개발행 불가 —
        사람이 앱에서 최종 게시해야 함) — 실패해도 계속 진행
   9. 유튜브 댓글 홍보 (post_comment, 재시도 포함) — 실패해도 계속 진행
@@ -227,6 +228,15 @@ def main():
     soft_step("인스타그램 Reels", lambda: run_captured([
         "python3", str(HERE / "post_instagram.py"),
         "--video", str(final_video), "--caption", ig_caption, "--out", str(ig_out_path),
+    ]))
+
+    # 8.55. 페이스북 페이지 발행 (부가) — FACEBOOK_ACCESS_TOKEN 미설정 시
+    # post_facebook.py가 KeyError로 죽고 soft_step이 그걸 잡아 로그만 남긴다.
+    # 인스타그램과 동일한 캡션(ig_caption)을 그대로 사용해 두 플랫폼에 같은 내용이 나가게 한다.
+    fb_out_path = work_dir / "facebook_result.json"
+    soft_step("페이스북 페이지", lambda: run_captured([
+        "python3", str(HERE / "post_facebook.py"),
+        "--video", str(final_video), "--caption", ig_caption, "--out", str(fb_out_path),
     ]))
 
     # 8.6. 틱톡 받은편지함(초안) 전달 (부가) — 앱 심사 전이라 API로 바로 공개
