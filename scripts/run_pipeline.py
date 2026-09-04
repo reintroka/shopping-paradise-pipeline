@@ -223,9 +223,10 @@ def main():
     # post_instagram.py가 KeyError로 죽고 soft_step이 그걸 잡아 로그만 남긴다
     # (계정 연결 전까지는 파이프라인 전체에 영향 없음).
     ig_out_path = work_dir / "instagram_result.json"
+    ig_caption = script_data.get("ig_caption") or script_data["x_post"]
     soft_step("인스타그램 Reels", lambda: run_captured([
         "python3", str(HERE / "post_instagram.py"),
-        "--video", str(final_video), "--caption", script_data["x_post"], "--out", str(ig_out_path),
+        "--video", str(final_video), "--caption", ig_caption, "--out", str(ig_out_path),
     ]))
 
     # 8.6. 틱톡 받은편지함(초안) 전달 (부가) — 앱 심사 전이라 API로 바로 공개

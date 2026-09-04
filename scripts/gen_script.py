@@ -14,7 +14,8 @@
   "narration_script3": "화면은 큼직한 십오점육 인치인데...",
   "youtube_title": "...",
   "youtube_description_intro": "...",
-  "x_post": "..."
+  "x_post": "...",
+  "ig_caption": "..."
 }
 """
 import argparse
@@ -92,11 +93,20 @@ PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 쇼츠 채널(쿠팡�
 [최근 X 포스트 (이 구조/표현과 겹치지 않게 새로 쓸 것, 없으면 빈 목록)]
 {recent_x_posts}
 
+- ig_caption: 인스타그램 릴스용 캡션. x_post와는 완전히 별도로, 인스타그램 사용자가 읽기 편하도록
+  **반드시 문단 사이를 실제 줄바꿈 두 번(\\n\\n)으로 구분**해서 다음 순서로 작성할 것 —
+  절대 줄바꿈 없이 한 문단으로 쭉 이어 쓰지 말 것:
+  1) 훅 문장 1~2줄 (이모지 1개로 시작해도 좋음)
+  2) 핵심 셀링포인트 2~3가지를 짧은 문장으로, 필요하면 이 부분도 문장마다 줄바꿈(\\n)
+  3) CTA 한 문장 ("프로필 링크"를 언급하며 구매/확인 유도, 링크 URL 자체는 넣지 말 것)
+  4) 빈 줄(\\n\\n) 하나 띄운 뒤, 마지막 줄에 해시태그 8~12개를 띄어쓰기로 나열한 블록
+     (상품/카테고리 관련 태그 위주로 다양하게 구성하고, 맨 끝에 #쇼핑의천국 태그를 포함할 것)
+
 [출력 형식 - JSON만 출력, 다른 텍스트 없이]
 {{"hook_title_line1":"","hook_title_line2":"","hook_speech":"","cta_speech":"",
 "spec1_title":"","spec1_body":"","spec2_title":"","spec2_body":"","spec3_title":"","spec3_body":"",
 "narration_script1":"","narration_script2":"","narration_script3":"",
-"youtube_title":"","youtube_description_intro":"","x_post":""}}
+"youtube_title":"","youtube_description_intro":"","x_post":"","ig_caption":""}}
 """
 
 
