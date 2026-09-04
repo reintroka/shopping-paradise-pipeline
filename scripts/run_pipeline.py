@@ -247,9 +247,10 @@ def main():
         "--video", str(final_video), "--caption-hint", script_data["x_post"], "--out", str(tiktok_out_path),
     ]))
     # 틱톡은 API로 캡션을 못 넣어 앱에서 직접 붙여넣어야 하므로, 요약 메시지에 섞이지 않게
-    # 쿠팡 파트너스 고지 문구만 단독 메시지로 보내 바로 복사해 쓸 수 있게 한다.
-    if tiktok_ok and script_data.get("coupang_disclosure"):
-        notify(script_data["coupang_disclosure"])
+    # x_post(고지 문구+설명+해시태그가 다 포함된 완성 캡션) 자체를 단독 메시지로 보내
+    # 그대로 복사해 붙여넣을 수 있게 한다.
+    if tiktok_ok and script_data.get("x_post"):
+        notify(script_data["x_post"])
 
     # 9. 유튜브 댓글 (부가, 재시도 포함)
     comment_text = (
