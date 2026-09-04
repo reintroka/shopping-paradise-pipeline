@@ -140,14 +140,16 @@ def parse_json_response(text: str) -> dict:
 
 
 def append_disclosure(text: str, max_len: int | None = None) -> str:
-    """본문 뒤에 빈 줄 하나 띄우고 쿠팡 파트너스 고지 문구를 붙인다.
-    max_len이 주어지면(X 280자 제한 등) 고지 문구가 잘리지 않도록 본문을 먼저 줄인다."""
+    """본문 맨 앞에 쿠팡 파트너스 고지 문구를 붙이고 빈 줄 하나 띄운 뒤 본문을 이어붙인다.
+    인스타/틱톡 피드는 캡션이 길면 "더보기" 뒤로 잘려서 문구가 안 보일 수 있으므로
+    끝이 아니라 맨 앞에 배치한다(2026-09-04). max_len이 주어지면(X 280자 제한 등)
+    전체 길이가 넘지 않도록 본문을 뒤에서부터 줄인다."""
     text = text.rstrip()
     if max_len is not None:
         budget = max_len - len(COUPANG_DISCLOSURE) - 2  # "\n\n" 두 글자
         if len(text) > budget:
             text = text[:budget].rstrip()
-    return f"{text}\n\n{COUPANG_DISCLOSURE}"
+    return f"{COUPANG_DISCLOSURE}\n\n{text}"
 
 
 def load_x_post_history() -> list[str]:
