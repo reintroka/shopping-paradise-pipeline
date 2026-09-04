@@ -128,9 +128,13 @@ def get_valid_access_token() -> str:
 
     app_secret도 facebook_token.json에 함께 저장돼 있어야 한다 — 없으면(최초
     부트스트랩 직후) 갱신을 건너뛰고 기존 토큰을 그대로 쓴다.
+
+    secrets 저장소에 facebook_token.json이 이미 있으면(2026-09-04 최초 시딩 완료)
+    bootstrap 값은 실제로 쓰이지 않으므로, FACEBOOK_ACCESS_TOKEN 환경변수가 클라우드에
+    등록돼 있지 않아도 KeyError 없이 동작해야 한다 — os.environ.get으로 폴백.
     """
     state = secrets_store.load(TOKEN_FILE, bootstrap={
-        "access_token": os.environ["FACEBOOK_ACCESS_TOKEN"], "obtained_at": None,
+        "access_token": os.environ.get("FACEBOOK_ACCESS_TOKEN", ""), "obtained_at": None,
     })
     access_token = state["access_token"]
     obtained_at = state.get("obtained_at")
