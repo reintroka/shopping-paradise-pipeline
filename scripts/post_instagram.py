@@ -42,7 +42,12 @@ GRAPH_API_VERSION = "v21.0"
 GRAPH_BASE = f"https://graph.instagram.com/{GRAPH_API_VERSION}"
 MEDIA_REPO_URL = "https://github.com/reintroka/shopping-paradise-media.git"
 MEDIA_PAGES_BASE = "https://reintroka.github.io/shopping-paradise-media"
-MEDIA_FILENAME = "reel.mp4"  # 매번 같은 파일명을 덮어써서 저장소 크기를 일정하게 유지
+# 2026-09-04: 예전엔 매번 같은 파일명(reel.mp4)을 덮어썼는데, GitHub Pages가 앞단에 쓰는
+# CDN 캐시(Cache-Control: max-age=600)가 URL 단위로 캐싱하다 보니 push 직후 인스타그램이
+# video_url을 가져갈 때 어제자 캐시가 아직 안 밀려나 "어제 영상이 오늘 캡션으로 발행되는"
+# 사고가 났음(실측 확인, [쇼핑의천국] female 인덕션 발행 건). 실행마다 고유 파일명을 써서
+# URL 자체를 매번 새로 만들면 캐시 충돌이 원천적으로 불가능해진다 — 저장소는 여전히
+# 파일 1개만(force push로 이전 파일 자동 제거) 유지되니 저장소 크기 문제도 없음.
 TOKEN_FILE = "instagram_token.json"
 # Meta 정책상 최소 24시간이면 재갱신 가능하지만, 토큰 자체가 60일 유효라 그렇게 자주
 # 갱신할 필요가 없다 — 30일로 잡아서 매 실행마다 API 호출+시크릿 저장소 push가 늘어나는
@@ -85,21 +90,26 @@ def publish_to_temp_host(video_path: Path) -> str:
     히스토리를 쌓지 않기 위해 매번 얕은 클론 없이 새 커밋 하나만 만들어 force push한다
     (run_pipeline.py의 다른 저장소들과 달리 이 저장소는 순수 임시 호스팅 용도라
     fast-forward를 유지할 필요가 없음).
+
+    파일명은 실행마다 고유하게(타임스탬프 기반) 만든다 — 고정 파일명을 재사용하면 GitHub
+    Pages 앞단 CDN 캐시가 그 URL을 붙들고 있다가 인스타그램이 가져갈 때 어제자 영상을
+    내줄 수 있다(실측으로 확인된 사고). 매번 새 URL이면 캐시 자체가 존재할 수 없다.
     """
+    media_filename = f"reel-{int(time.time())}.mp4"
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
-        (tmp_path / MEDIA_FILENAME).write_bytes(video_path.read_bytes())
+        (tmp_path / media_filename).write_bytes(video_path.read_bytes())
         (tmp_path / ".nojekyll").touch()
         subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
         subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin", MEDIA_REPO_URL], check=True)
         subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
         subprocess.run(
             ["git", "-C", str(tmp_path), "-c", "user.email=bot@shopping-paradise.local",
-             "-c", "user.name=shopping-paradise-bot", "commit", "-q", "-m", "temp host reel"],
+             "-c", "user.name=shopping-paradise-bot", "commit", "-q", "-m", f"temp host {media_filename}"],
             check=True,
         )
         subprocess.run(["git", "-C", str(tmp_path), "push", "--force", "origin", "HEAD:main"], check=True)
-    return f"{MEDIA_PAGES_BASE}/{MEDIA_FILENAME}"
+    return f"{MEDIA_PAGES_BASE}/{media_filename}"
 
 
 def wait_until_reachable(url: str, timeout_secs: int = 180) -> None:
