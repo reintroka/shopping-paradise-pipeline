@@ -25,6 +25,8 @@ import random
 import urllib.request
 from pathlib import Path
 
+from korean_number import price_to_korean
+
 X_POST_HISTORY_PATH = Path(__file__).resolve().parent.parent / "x_post_history.json"
 X_POST_HISTORY_MAX = 12
 
@@ -80,6 +82,13 @@ PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 쇼츠 채널(쿠팡�
   글자 그대로 표시되거나 HeyGen 아바타 TTS(숫자를 정상적으로 읽음)가 읽으므로, 숫자를
   절대 한글로 풀어쓰지 말고 원래 숫자+단위 표기를 그대로 쓸 것** (예: "12.1인치", "512GB",
   "i5" 그대로 — "십이점일인치" 같은 표기 금지).
+  **단, 가격(원)은 예외입니다** — HeyGen TTS가 "12.1인치"/"512GB" 같은 짧은 스펙
+  숫자는 정상적으로 읽지만, 5자리 이상 콤마 단위 가격(예: "57,780원")은 실제
+  발행본에서 "50 7780번으로" 식으로 깨져서 읽히는 사고가 확인됐습니다. 위
+  [가격]에 이미 한글 발음으로 풀어서 드린 값("{price}" 형태)을 hook_speech/
+  cta_speech/x_post 등에서 가격을 언급할 때 그 표기 그대로 옮겨 쓰세요 — 숫자로
+  다시 바꾸지 마세요. 스펙 숫자(용량/사이즈/모델명 등)는 이 예외와 무관하게
+  기존 지침(원래 숫자 표기 유지)을 그대로 따르세요.
 - youtube_title: SEO 제목 60자 이내, 후킹있게
 - youtube_description_intro: 설명란 맨 위에 들어갈 1~2문장 (링크/고지문은 별도로 붙임)
 - x_post: X(트위터) 홍보 문구. 140~220자 분량으로 충분히 길게 써서 훅 문장 + 핵심 셀링포인트
@@ -176,7 +185,12 @@ def main():
     hashtag_count = random.choice([1, 2, 3])
     prompt = PROMPT_TEMPLATE.format(
         product_name=product["productName"],
-        price=f"{product['productPrice']:,}원",
+        # 2026-09-05: 쉼표 포함 숫자("57,780원")를 그대로 Gemini에게 넘기면 대본에
+        # 그 문자열이 그대로 박혀 TTS가 잘못 읽는 사고가 실제 발행본에서 확인됨
+        # ("50 7780번으로" 식으로 깨져 읽힘). 롱폼 딥다이브(deepdive_narration.py)에서
+        # 이미 검증된 korean_number.py로 한글 발음 문자열을 미리 만들어 넘긴다 —
+        # Gemini가 숫자를 다시 조합할 필요 없이 그대로 대본에 옮겨적기만 하면 됨.
+        price=price_to_korean(product["productPrice"]),
         keyword=product.get("keyword", ""),
         recent_x_posts=recent_x_posts,
         cta_phrase=cta_phrase,
