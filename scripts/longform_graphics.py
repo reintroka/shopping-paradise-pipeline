@@ -576,11 +576,18 @@ def allocate_page_durations(pages: list, total_duration: float, min_dur: float =
 
 
 def build_deepdive_caption(out_dir: Path, idx, text: str, emphasis_words: list,
-                            max_width: int = 1500, font_size: int = 42, min_font_size: int = 28,
-                            max_lines: int = 2) -> Path:
+                            max_width: int = 1500, font_size: int = 42, min_font_size: int = 20,
+                            max_lines: int = 1) -> Path:
     """딥다이브 나레이션 자막 — 강조단어만 골드 하이라이트색+살짝 크게 (다른 채널들의
     한줄 강조자막 패턴과 같은 정신, 이 채널의 캡션 pill 스타일로 재현). 가로 캔버스라
-    세로판보다 폭을 넉넉히 쓰고 줄 수는 2줄로 줄임."""
+    세로판보다 폭을 넉넉히 쓴다.
+
+    2026-09-05: max_lines를 2->1로 변경(사용자 지적: "자막은 1줄만 나오게 해줘").
+    실측 결과 split_narration_pages()가 만드는 페이지(기본 42자 이하)는 font_size
+    기본값(42)에서도 폭 1430px 안에 거의 항상 들어가서(측정: 42자 기준 약
+    1390px), 대부분의 경우 애초에 축소 없이도 1줄로 끝난다 — 드물게 페이지가
+    조금 더 길어지는 경우를 대비해 min_font_size도 28->20으로 낮춰 축소 여유를
+    더 줬다."""
     tmp = Image.new("RGBA", (10, 10))
     d0 = ImageDraw.Draw(tmp)
     inner_w = max_width - 70

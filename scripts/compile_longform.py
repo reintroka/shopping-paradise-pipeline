@@ -42,6 +42,7 @@ import subprocess
 from pathlib import Path
 
 import deepdive_narration
+import google_tts
 import longform_graphics
 import shorts_log
 import upload_youtube
@@ -185,6 +186,26 @@ def _static_segment(image_path: Path, duration: float, out_path: Path):
          "-shortest", str(out_path)])
 
 
+def _narrated_static_segment(image_path: Path, narration_audio: Path, min_duration: float, out_path: Path):
+    """정지 카드(인트로/아웃트로)에 나레이션 오디오를 얹는다(2026-09-05 추가 —
+    기존엔 무음 정지카드였음, 사용자 요청으로 코어디웹 리캡롱폼과 동일하게
+    멘트를 넣는다). 카드 표시시간은 나레이션 길이+0.6초 여유, min_duration보다
+    짧아지지 않도록 하한을 둔다(나레이션이 아주 짧게 나올 경우 카드가 너무
+    빨리 넘어가는 걸 방지). 나레이션이 min_duration보다 길면 apad 없이 그
+    길이만큼 그대로 늘어난다."""
+    audio_dur = _ffprobe_duration(narration_audio)
+    total_dur = max(min_duration, audio_dur + 0.6)
+    run(["ffmpeg", "-y", "-v", "error",
+         "-loop", "1", "-t", f"{total_dur:.2f}", "-i", str(image_path),
+         "-i", str(narration_audio),
+         "-filter_complex", f"[1:a]apad=whole_dur={total_dur:.2f}[aout]",
+         "-map", "0:v", "-map", "[aout]",
+         "-r", str(FPS), "-pix_fmt", "yuv420p",
+         "-c:v", "libx264", "-crf", "16", "-c:a", "aac", "-b:a", "192k",
+         "-t", f"{total_dur:.2f}",
+         str(out_path)])
+
+
 def _deepdive_segment(backdrop_path: Path, caption_specs: list, audio_path: Path, duration: float, out_path: Path):
     """backdrop_path는 이미 필러박스 합성이 끝난 가로(1920x1080) 스틸 — 그 위에 통째로
     Ken Burns 줌을 걸고, caption_specs(캡션이미지경로, 시작초, 끝초) 각각을 해당 구간에만
@@ -256,7 +277,13 @@ def build_longform(entries: list, clip_paths: dict, work_dir: Path, vol: int) ->
 
     intro_img = longform_graphics.build_intro_card(work_dir, vol, n)
     intro_seg = work_dir / "seg_intro.mp4"
-    _static_segment(intro_img, INTRO_DUR, intro_seg)
+    intro_text = (
+        f"이번 주 인기템 모음, 아이템 {n}개를 한 번에 몰아봅니다. "
+        f"쇼핑의천국이 엄선한 오늘의 추천템, 지금 바로 시작할게요."
+    )
+    intro_audio = work_dir / "intro_narration.mp3"
+    google_tts.synthesize(intro_text, "female", intro_audio)
+    _narrated_static_segment(intro_img, intro_audio, INTRO_DUR, intro_seg)
     pieces.append(intro_seg)
 
     for i, e in enumerate(entries, start=1):
@@ -314,7 +341,13 @@ def build_longform(entries: list, clip_paths: dict, work_dir: Path, vol: int) ->
 
     outro_img = longform_graphics.build_outro_card(work_dir)
     outro_seg = work_dir / "seg_outro.mp4"
-    _static_segment(outro_img, OUTRO_DUR, outro_seg)
+    outro_text = (
+        "오늘 소개해드린 아이템들은 프로필 링크에서 만나보실 수 있습니다. "
+        "다음 다이제스트도 놓치지 마시고, 구독과 알림 설정 부탁드릴게요."
+    )
+    outro_audio = work_dir / "outro_narration.mp3"
+    google_tts.synthesize(outro_text, "female", outro_audio)
+    _narrated_static_segment(outro_img, outro_audio, OUTRO_DUR, outro_seg)
     pieces.append(outro_seg)
 
     out_path = work_dir / "longform.mp4"

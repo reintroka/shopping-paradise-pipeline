@@ -22,6 +22,10 @@ PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 롱폼 다이제스�
 설명하되 과장/허위 광고성 표현은 피하고, 자연스럽게 소비자에게 도움이 되는 정보처럼
 쓰세요.
 
+**가격은 이 코멘트 전체에서 정확히 한 번만 언급하세요** — 강조하고 싶어도 두 번
+이상 반복하지 마세요(예: "이 가격에", "가격 대비" 같은 표현으로 가격을 다시
+암시하는 건 괜찮지만, 실제 가격 숫자/자리표시자를 두 번 넣으면 안 됩니다).
+
 이 코멘트는 음성 나레이션(TTS)으로 재생되는 동시에 화면 자막으로도 표시되므로,
 **같은 내용을 숫자 표기만 다르게 한 두 가지 버전**으로 작성하세요:
 - narration_spoken: TTS가 읽을 버전. 용량/인치 등 숫자는 한글 발음으로 풀어써야
@@ -80,11 +84,29 @@ def generate_and_synthesize(product_name: str, price: int, specs: list[tuple] | 
     prompt = PROMPT_TEMPLATE.format(
         product_name=product_name, price=price_digits, specs_text=specs_text, price_token=PRICE_TOKEN,
     )
-    text = _call_gemini(prompt)
-    data = _parse_json(text)
-    narration_spoken = data["narration_spoken"]
-    narration_caption = data["narration_caption"]
-    emphasis_words = data.get("emphasis_words", [])
+    narration_spoken = narration_caption = ""
+    emphasis_words: list = []
+    for attempt in range(3):
+        text = _call_gemini(prompt)
+        data = _parse_json(text)
+        narration_spoken = data["narration_spoken"]
+        narration_caption = data["narration_caption"]
+        emphasis_words = data.get("emphasis_words", [])
+        token_count = narration_spoken.count(PRICE_TOKEN)
+        if token_count == 1:
+            break
+        print(f"  [경고] 가격 자리표시자가 {token_count}번 등장(정확히 1번이어야 함) — "
+              f"재시도 {attempt + 1}/3: {narration_spoken[:80]!r}")
+    else:
+        # 2026-09-05: 3회 재시도에도 가격이 중복 언급되는 경우, 두 번째부터는 그냥
+        # 지워서 최소한 "가격을 두 번 말하는" 사고만은 막는다(사용자가 실제 발행본
+        # 43초 지점에서 가격이 두 번 나온 걸 지적해서 발견 — 재시도로도 못 고치면
+        # 완전 차단하는 게 낫다는 판단, 문장이 약간 어색해질 수는 있음).
+        first, *rest = narration_spoken.split(PRICE_TOKEN, 1) or [narration_spoken]
+        if rest:
+            narration_spoken = first + PRICE_TOKEN + rest[0].replace(PRICE_TOKEN, "")
+        print(f"  [경고] 3회 재시도 후에도 가격이 중복 언급됨 — 두 번째 이후는 강제로 제거: "
+              f"{narration_spoken[:80]!r}")
 
     # 2026-09-02: 가격을 LLM이 직접 한글로 계산해 풀어쓰다가 200만원대를 20만원대로
     # 잘못 발음하는 사고 발생(노트북 상품) — 가격 변환은 여기서 코드로 결정적으로
@@ -93,6 +115,12 @@ def generate_and_synthesize(product_name: str, price: int, specs: list[tuple] | 
         print(f"  [경고] narration_spoken에 {PRICE_TOKEN} 자리표시자가 없습니다 — "
               f"모델이 지침을 어기고 가격을 직접 풀어썼을 수 있습니다: {narration_spoken[:80]!r}")
     narration_spoken = narration_spoken.replace(PRICE_TOKEN, korean_number.price_to_korean(price))
+    # narration_caption도 같은 이유로 가격 표기(숫자, "{price_digits}"로 이미 대체된
+    # 형태)가 두 번 이상이면 두 번째부터 제거 — narration_spoken과 별개로 생성되므로
+    # 독립적으로 확인해야 한다.
+    if narration_caption.count(PRICE_TOKEN) > 1:
+        first, *rest = narration_caption.split(PRICE_TOKEN, 1)
+        narration_caption = first + PRICE_TOKEN + rest[0].replace(PRICE_TOKEN, "") if rest else narration_caption
     narration_caption = narration_caption.replace(PRICE_TOKEN, price_digits)
 
     audio_path = work_dir / f"deepdive_narration_{idx}.mp3"
