@@ -27,6 +27,23 @@ from pathlib import Path
 
 from korean_number import price_to_korean
 
+# 2026-09-06: 가격을 미리 한글로 변환해서("이십일만사천오백원") 프롬프트에 넘겨도,
+# Gemini가 그 문자열을 그대로 옮겨적다가 자릿수 덩어리("만" 단위)를 통째로 잘못
+# 베끼는 사고가 실제 발행본에서 발견됨(예: "이십일만사천오백원"→"칠만사천오백원",
+# 화면 가격 카드는 214,500원인데 TTS는 74,500원이라고 말함). 롱폼
+# deepdive_narration.py에서 이미 검증된 방식대로, Gemini에게는 가격 값을 아예 안
+# 맡기고 자리표시자만 쓰게 한 뒤 코드가 결정적으로 채워 넣는다 — LLM이 숫자를
+# "베끼는" 단계 자체를 제거해야 이런 사고가 근본적으로 재발하지 않는다.
+PRICE_TOKEN = "[[PRICE]]"
+# TTS/HeyGen 아바타가 음성으로 읽는 필드 — 가격은 한글 발음으로 채운다.
+SPOKEN_PRICE_FIELDS = ("hook_speech", "cta_speech", "narration_script1", "narration_script2", "narration_script3")
+# 화면에 글자로 표시되는 필드 — 가격은 숫자+콤마 표기로 채운다.
+TEXT_PRICE_FIELDS = (
+    "hook_title_line1", "hook_title_line2", "spec1_title", "spec1_body",
+    "spec2_title", "spec2_body", "spec3_title", "spec3_body",
+    "youtube_title", "youtube_description_intro", "x_post", "ig_caption",
+)
+
 X_POST_HISTORY_PATH = Path(__file__).resolve().parent.parent / "x_post_history.json"
 X_POST_HISTORY_MAX = 12
 
@@ -59,7 +76,9 @@ PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 쇼츠 채널(쿠팡�
 {product_name}
 
 [가격]
-{price}
+{price} (참고용 — 아래 어느 필드에서든 가격을 언급하고 싶으면 이 숫자를 직접 쓰지
+말고 반드시 플레이스홀더 문자열 "{price_token}" 를 그 자리에 그대로 삽입할 것.
+실제 값은 코드가 나중에 정확하게 자동으로 채워 넣습니다.)
 
 [카테고리 키워드]
 {keyword}
@@ -76,19 +95,22 @@ PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 쇼츠 채널(쿠팡�
   설명이 되도록). **이 세 필드만 숫자를 한글 발음으로 풀어쓸 것** (예: "15.6인치"→
   "십오점육 인치", "512GB"→"오백십이 기가", "i5"→"아이파이브") — TTS가 숫자를 잘못
   읽는 걸 방지하기 위함. 이 세 필드는 화면에 절대 글자로 표시되지 않고 음성으로만
-  재생됨. **이 중 가격을 언급할 일이 있으면, 직접 숫자를 한글로 변환하려 하지 말고
-  위 [가격]에 이미 변환해서 드린 값("{price}")을 그대로 옮겨 쓰세요** — 5자리 이상
-  콤마 단위 가격을 Gemini가 직접 변환하다가 자릿수를 틀리는 사고가 실제로
-  발생했습니다(예: "57,780원"을 "50 7780번" 식으로 잘못 옮긴 사례).
+  재생됨. **이 중 가격을 언급할 일이 있으면, 직접 숫자나 한글 발음을 쓰지 말고
+  반드시 플레이스홀더 "{price_token}" 만 그 자리에 그대로 삽입하세요** — 5자리 이상
+  가격을 Gemini가 직접 옮겨적다가 자릿수(만 단위 등)를 통째로 잘못 베끼는 사고가
+  반복적으로 발생했습니다(예: "57,780원"을 "50 7780번"으로, "이십일만사천오백원"을
+  "칠만사천오백원"으로 잘못 옮긴 사례들 — 화면 가격 카드와 실제 음성이 서로 다른
+  금액을 말하게 됨). 코드가 이 플레이스홀더를 정확한 값으로 자동 치환하므로 Gemini는
+  가격의 실제 숫자/한글 표기를 절대 직접 작성하지 마세요.
 - **주의: narration_script1/2/3을 제외한 모든 필드(spec1~3_title/body, hook_title_line1/2,
-  hook_speech, cta_speech, youtube_title, youtube_description_intro, x_post)는 화면에
-  글자 그대로 표시되거나 HeyGen 아바타 TTS(숫자를 정상적으로 읽음)가 읽으므로, 숫자를
+  hook_speech, cta_speech, youtube_title, youtube_description_intro, x_post, ig_caption)는
+  화면에 글자 그대로 표시되거나 HeyGen 아바타 TTS가 읽으므로, 숫자를
   절대 한글로 풀어쓰지 말고 원래 숫자+단위 표기를 그대로 쓸 것** (예: "12.1인치", "512GB",
   "i5" 그대로 — "십이점일인치" 같은 표기 금지).
-  **단, 가격(원)은 이 필드들에서도 예외입니다** — 가격을 언급할 때는 위 [가격]에
-  이미 한글 발음으로 풀어서 드린 값("{price}" 형태)을 그대로 옮겨 쓰세요(숫자로
-  다시 바꾸지 마세요). 스펙 숫자(용량/사이즈/모델명 등)는 이 예외와 무관하게
-  기존 지침(원래 숫자 표기 유지)을 그대로 따르세요.
+  **가격(원)을 언급할 일이 있으면 이 필드들에서도 마찬가지로 절대 직접 숫자를 쓰지
+  말고 플레이스홀더 "{price_token}" 만 그 자리에 삽입하세요**(코드가 나중에 정확한
+  숫자+콤마 표기로 자동 치환합니다). 스펙 숫자(용량/사이즈/모델명 등)는 이 예외와
+  무관하게 기존 지침(원래 숫자 표기 유지)을 그대로 따르세요.
 - youtube_title: SEO 제목 60자 이내, 후킹있게
 - youtube_description_intro: 설명란 맨 위에 들어갈 1~2문장 (링크/고지문은 별도로 붙임)
 - x_post: X(트위터) 홍보 문구. 140~220자 분량으로 충분히 길게 써서 훅 문장 + 핵심 셀링포인트
@@ -172,6 +194,28 @@ def save_x_post_history(history: list[str], new_post: str) -> None:
     X_POST_HISTORY_PATH.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _dedupe_price_token(text: str) -> str:
+    """한 필드 안에 플레이스홀더가 실수로 여러 번 들어간 경우 첫 번째만 남긴다."""
+    if text.count(PRICE_TOKEN) > 1:
+        first, *rest = text.split(PRICE_TOKEN, 1)
+        text = first + PRICE_TOKEN + rest[0].replace(PRICE_TOKEN, "")
+    return text
+
+
+def fill_price_placeholders(data: dict, price: int) -> dict:
+    """Gemini가 남긴 "{PRICE_TOKEN}" 자리표시자를 필드 성격에 맞는 정확한 값으로
+    치환한다 — 음성 필드는 한글 발음, 화면 표시 필드는 숫자+콤마 표기."""
+    spoken_price = price_to_korean(price)
+    text_price = f"{price:,}원"
+    for field in SPOKEN_PRICE_FIELDS:
+        if data.get(field):
+            data[field] = _dedupe_price_token(data[field]).replace(PRICE_TOKEN, spoken_price)
+    for field in TEXT_PRICE_FIELDS:
+        if data.get(field):
+            data[field] = _dedupe_price_token(data[field]).replace(PRICE_TOKEN, text_price)
+    return data
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--product-json", required=True)
@@ -185,12 +229,14 @@ def main():
     hashtag_count = random.choice([1, 2, 3])
     prompt = PROMPT_TEMPLATE.format(
         product_name=product["productName"],
-        # 2026-09-05: 쉼표 포함 숫자("57,780원")를 그대로 Gemini에게 넘기면 대본에
-        # 그 문자열이 그대로 박혀 TTS가 잘못 읽는 사고가 실제 발행본에서 확인됨
-        # ("50 7780번으로" 식으로 깨져 읽힘). 롱폼 딥다이브(deepdive_narration.py)에서
-        # 이미 검증된 korean_number.py로 한글 발음 문자열을 미리 만들어 넘긴다 —
-        # Gemini가 숫자를 다시 조합할 필요 없이 그대로 대본에 옮겨적기만 하면 됨.
-        price=price_to_korean(product["productPrice"]),
+        # 2026-09-06: 가격 문자열(한글 발음이든 콤마 숫자든)을 Gemini에게 넘겨서
+        # "그대로 옮겨 적으라"고 시켜도 실제로는 베끼다가 틀리는 사고가 반복됨
+        # (57,780원→50 7780번, 이십일만사천오백원→칠만사천오백원 등 — 화면 가격
+        # 카드와 실제 TTS 음성이 서로 다른 금액을 말하게 됨). Gemini는 [[PRICE]]
+        # 자리표시자만 남기게 하고, 실제 값은 fill_price_placeholders()가 코드로
+        # 결정적으로 채워 넣는다(롱폼 deepdive_narration.py와 동일한 패턴).
+        price=f"{product['productPrice']:,}원",
+        price_token=PRICE_TOKEN,
         keyword=product.get("keyword", ""),
         recent_x_posts=recent_x_posts,
         cta_phrase=cta_phrase,
@@ -198,6 +244,7 @@ def main():
     )
     text = call_gemini(prompt)
     data = parse_json_response(text)
+    data = fill_price_placeholders(data, product["productPrice"])
     if data.get("x_post"):
         save_x_post_history(history, data["x_post"])  # 고지 문구 붙이기 전 원문으로 이력 저장(중복비교용)
         data["x_post"] = append_disclosure(data["x_post"], max_len=X_POST_MAX_LEN)
