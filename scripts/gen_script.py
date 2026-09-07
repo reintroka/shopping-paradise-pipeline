@@ -162,12 +162,17 @@ def call_gemini(prompt: str) -> str:
 
 
 def parse_json_response(text: str) -> dict:
+    """Gemini 응답에서 JSON 객체 하나를 파싱한다. 마크다운 코드펜스(```)는 벗겨내고,
+    펜스 없이 JSON 객체 뒤에 여분의 텍스트가 붙어오는 경우도 raw_decode로 첫 객체만
+    취해서 허용한다(2026-09-07: "Extra data" JSONDecodeError로 male 파이프라인 실패)."""
     text = text.strip()
     if text.startswith("```"):
         text = text.strip("`")
         if text.startswith("json"):
             text = text[4:]
-    return json.loads(text)
+    text = text.strip()
+    data, _ = json.JSONDecoder().raw_decode(text)
+    return data
 
 
 def append_disclosure(text: str, max_len: int | None = None) -> str:
