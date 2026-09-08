@@ -525,42 +525,65 @@ def _wrap_lines(text, font, draw, max_w):
     return lines
 
 
-def split_narration_pages(text: str, max_chars: int = 42) -> list:
+def split_narration_pages(text: str, font_size: int = 42, max_width: int = 1500) -> list:
     """딥다이브 나레이션(20~30초, 110~160자)을 문장 단위로 쪼개 화면 전환용 페이지
     목록을 만든다. 2026-09-01 사용자 지적: "긴 대사를 한 화면으로 보여주나" — 기존엔
     나레이션 전체를 캡션 이미지 1장으로 만들어 처음부터 끝까지 고정 표시했다. 문장
-    종결 어미(다/요/죠 + .!?) 기준으로 나누고, 문장 하나가 너무 길면 쉼표 기준으로 더
-    쪼개고, 너무 짧은 문장은 다음 문장과 합쳐 자연스러운 길이의 페이지로 만든다."""
+    종결 어미(다/요/죠 + .!?) 기준으로 나누고, 문장 하나가 너무 길면 쉼표 → 그래도
+    길면 단어 단위로 더 쪼개고, 너무 짧은 조각은 다음과 합쳐 자연스러운 길이의
+    페이지로 만든다.
+
+    2026-09-08: 글자수(42자) 근사치 기준이라 실제 렌더 폭을 넘는 경우가 있었고,
+    그럴 때 build_deepdive_caption()이 폰트를 축소해 억지로 한 줄에 욱여넣었다 —
+    사용자가 "길면 다음 컷(페이지)으로 넘기고 글자크기는 보기좋게 유지해라"고
+    지적. 글자수 대신 build_deepdive_caption()과 같은 폰트/폭으로 실측해서 그
+    폭을 넘기 직전에 페이지를 끊도록 변경 - 이제 페이지는 항상 font_size 그대로
+    한 줄에 들어가서 build_deepdive_caption()의 축소 루프는 사실상 발동하지
+    않는다(만약을 위해 안전장치로만 남겨둠)."""
     import re
+    inner_w = max_width - 70
+    dummy = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
+    font = bg.sfont(font_size, "SemiBold")
+
+    def fits(s: str) -> bool:
+        return dummy.textlength(s, font=font) <= inner_w
+
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()]
     if not sentences:
         return [text.strip()] if text.strip() else [""]
 
-    expanded = []
-    for s in sentences:
-        if len(s) <= max_chars:
-            expanded.append(s)
-            continue
-        parts, buf = s.split(", "), ""
-        for p in parts:
-            trial = f"{buf}, {p}" if buf else p
-            if len(trial) <= max_chars or not buf:
-                buf = trial
-            else:
-                expanded.append(buf)
-                buf = p
-        if buf:
-            expanded.append(buf)
+    def _split_by(chunks: list, sep: str) -> list:
+        out = []
+        for s in chunks:
+            if fits(s):
+                out.append(s)
+                continue
+            parts, buf = s.split(sep), ""
+            for p in parts:
+                trial = f"{buf}{sep}{p}" if buf else p
+                if fits(trial) or not buf:
+                    buf = trial
+                else:
+                    out.append(buf)
+                    buf = p
+            if buf:
+                out.append(buf)
+        return out
+
+    expanded = _split_by(sentences, ", ")
+    expanded = _split_by(expanded, " ")  # 쉼표로도 안 되는 긴 문장은 단어 단위로
 
     pages, buf = [], ""
     for s in expanded:
         if not buf:
             buf = s
-        elif len(buf) + 1 + len(s) <= max_chars:
-            buf = f"{buf} {s}"
         else:
-            pages.append(buf)
-            buf = s
+            trial = f"{buf} {s}"
+            if fits(trial):
+                buf = trial
+            else:
+                pages.append(buf)
+                buf = s
     if buf:
         pages.append(buf)
     return pages
