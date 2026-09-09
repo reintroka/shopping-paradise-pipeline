@@ -25,7 +25,7 @@ import random
 import urllib.request
 from pathlib import Path
 
-from korean_number import price_to_korean
+from korean_number import price_to_korean, strip_duplicate_won
 
 # 2026-09-06: 가격을 미리 한글로 변환해서("이십일만사천오백원") 프롬프트에 넘겨도,
 # Gemini가 그 문자열을 그대로 옮겨적다가 자릿수 덩어리("만" 단위)를 통째로 잘못
@@ -101,7 +101,10 @@ PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 쇼츠 채널(쿠팡�
   반복적으로 발생했습니다(예: "57,780원"을 "50 7780번"으로, "이십일만사천오백원"을
   "칠만사천오백원"으로 잘못 옮긴 사례들 — 화면 가격 카드와 실제 음성이 서로 다른
   금액을 말하게 됨). 코드가 이 플레이스홀더를 정확한 값으로 자동 치환하므로 Gemini는
-  가격의 실제 숫자/한글 표기를 절대 직접 작성하지 마세요.
+  가격의 실제 숫자/한글 표기를 절대 직접 작성하지 마세요. **주의: "{price_token}"
+  자리에 채워질 값에는 이미 "원"이 포함되어 있으므로("칠만사천오백원" 등), 플레이스홀더
+  바로 뒤에 "원"을 추가로 쓰지 마세요(예: "이 가격에 {price_token}이면"처럼 쓸 것 —
+  "{price_token}원"처럼 "원"을 덧붙이면 "...원원"으로 중복됩니다).
 - **주의: narration_script1/2/3을 제외한 모든 필드(spec1~3_title/body, hook_title_line1/2,
   hook_speech, cta_speech, youtube_title, youtube_description_intro, x_post, ig_caption)는
   화면에 글자 그대로 표시되거나 HeyGen 아바타 TTS가 읽으므로, 숫자를
@@ -109,7 +112,8 @@ PROMPT_TEMPLATE = """당신은 "쇼핑의천국" 유튜브 쇼츠 채널(쿠팡�
   "i5" 그대로 — "십이점일인치" 같은 표기 금지).
   **가격(원)을 언급할 일이 있으면 이 필드들에서도 마찬가지로 절대 직접 숫자를 쓰지
   말고 플레이스홀더 "{price_token}" 만 그 자리에 삽입하세요**(코드가 나중에 정확한
-  숫자+콤마 표기로 자동 치환합니다). 스펙 숫자(용량/사이즈/모델명 등)는 이 예외와
+  숫자+콤마 표기로 자동 치환합니다). 이 값에도 이미 "원"이 포함되므로("57,780원" 등)
+  플레이스홀더 뒤에 "원"을 또 쓰지 마세요. 스펙 숫자(용량/사이즈/모델명 등)는 이 예외와
   무관하게 기존 지침(원래 숫자 표기 유지)을 그대로 따르세요.
 - youtube_title: SEO 제목 60자 이내, 후킹있게
 - youtube_description_intro: 설명란 맨 위에 들어갈 1~2문장 (링크/고지문은 별도로 붙임)
@@ -217,10 +221,12 @@ def fill_price_placeholders(data: dict, price: int) -> dict:
     text_price = f"{price:,}원"
     for field in SPOKEN_PRICE_FIELDS:
         if data.get(field):
-            data[field] = _dedupe_price_token(data[field]).replace(PRICE_TOKEN, spoken_price)
+            text = _dedupe_price_token(data[field]).replace(PRICE_TOKEN, spoken_price)
+            data[field] = strip_duplicate_won(text, spoken_price)
     for field in TEXT_PRICE_FIELDS:
         if data.get(field):
-            data[field] = _dedupe_price_token(data[field]).replace(PRICE_TOKEN, text_price)
+            text = _dedupe_price_token(data[field]).replace(PRICE_TOKEN, text_price)
+            data[field] = strip_duplicate_won(text, text_price)
     return data
 
 

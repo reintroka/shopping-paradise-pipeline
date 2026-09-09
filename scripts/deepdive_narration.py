@@ -117,7 +117,12 @@ def generate_and_synthesize(product_name: str, price: int, specs: list[tuple] | 
     if PRICE_TOKEN not in narration_spoken:
         print(f"  [경고] narration_spoken에 {PRICE_TOKEN} 자리표시자가 없습니다 — "
               f"모델이 지침을 어기고 가격을 직접 풀어썼을 수 있습니다: {narration_spoken[:80]!r}")
-    narration_spoken = narration_spoken.replace(PRICE_TOKEN, korean_number.price_to_korean(price))
+    spoken_price = korean_number.price_to_korean(price)
+    narration_spoken = narration_spoken.replace(PRICE_TOKEN, spoken_price)
+    # 2026-09-09: spoken_price/price_digits는 항상 "원"으로 끝나는데, 모델이 플레이스홀더
+    # 바로 뒤에 "원"을 관성적으로 또 붙여 써서 "...원원"이 되는 사고가 확인됨(쇼핑의천국
+    # 릴스). 치환 직후 중복분을 코드로 제거한다.
+    narration_spoken = korean_number.strip_duplicate_won(narration_spoken, spoken_price)
     # narration_caption도 같은 이유로 가격 표기(숫자, "{price_digits}"로 이미 대체된
     # 형태)가 두 번 이상이면 두 번째부터 제거 — narration_spoken과 별개로 생성되므로
     # 독립적으로 확인해야 한다.
@@ -125,6 +130,7 @@ def generate_and_synthesize(product_name: str, price: int, specs: list[tuple] | 
         first, *rest = narration_caption.split(PRICE_TOKEN, 1)
         narration_caption = first + PRICE_TOKEN + rest[0].replace(PRICE_TOKEN, "") if rest else narration_caption
     narration_caption = narration_caption.replace(PRICE_TOKEN, price_digits)
+    narration_caption = korean_number.strip_duplicate_won(narration_caption, price_digits)
 
     audio_path = work_dir / f"deepdive_narration_{idx}.mp3"
     meta = google_tts.synthesize(narration_spoken, character, audio_path)

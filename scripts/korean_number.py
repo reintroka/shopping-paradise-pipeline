@@ -56,3 +56,14 @@ def number_to_korean(n: int) -> str:
 def price_to_korean(price: int) -> str:
     """가격(원)을 TTS가 자연스럽게 읽을 한글 문자열로 변환한다 (예: 722650 -> "칠십이만이천육백오십원")."""
     return f"{number_to_korean(int(price))}원"
+
+
+def strip_duplicate_won(text: str, price_string: str) -> str:
+    """가격 플레이스홀더 자리에 price_string(항상 "원"으로 끝남)을 채워 넣었는데,
+    LLM이 그 자리 바로 뒤에 "원"을 관성적으로 또 붙여 쓴 경우("...원원") 중복분을
+    제거한다 (2026-09-09, 쇼핑의천국 릴스 실제 발행분에서 "원원" 확인됨 — 프롬프트가
+    플레이스홀더 삽입만 지시하고 "이미 원이 포함돼 있으니 뒤에 원을 더 붙이지
+    말라"는 점을 명시하지 않아 발생)."""
+    if price_string.endswith("원"):
+        return text.replace(price_string + "원", price_string)
+    return text
