@@ -69,7 +69,10 @@ def _parse_json(text: str) -> dict:
         text = text.strip("`")
         if text.startswith("json"):
             text = text[4:]
-    return json.loads(text)
+    # strict=False: Gemini가 문자열 값 안에 이스케이프 안 된 실제 줄바꿈(제어문자)을
+    # 넣어 반환할 때 "Invalid control character" 에러로 죽는 사고 방지(2026-09-09,
+    # 미스터리실록 topic_source.py와 동일 원인).
+    return json.loads(text, strict=False)
 
 
 def generate_and_synthesize(product_name: str, price: int, specs: list[tuple] | None,

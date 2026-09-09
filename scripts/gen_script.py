@@ -171,7 +171,10 @@ def parse_json_response(text: str) -> dict:
         if text.startswith("json"):
             text = text[4:]
     text = text.strip()
-    data, _ = json.JSONDecoder().raw_decode(text)
+    # strict=False: Gemini가 문자열 값 안에 이스케이프 안 된 실제 줄바꿈(제어문자)을
+    # 넣어 반환할 때 "Invalid control character" 에러로 죽는 사고 방지(2026-09-09,
+    # 미스터리실록 topic_source.py와 동일 원인).
+    data, _ = json.JSONDecoder(strict=False).raw_decode(text)
     return data
 
 
