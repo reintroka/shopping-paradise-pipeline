@@ -241,16 +241,19 @@ def main():
 
     # 8.6. 틱톡 받은편지함(초안) 전달 (부가) — 앱 심사 전이라 API로 바로 공개
     # 발행은 불가, 계정 소유자가 틱톡 앱 알림에서 직접 게시해야 최종 발행됨.
+    # x_post는 X(트위터) 280자 제한에 맞춰 gen_script.py에서 강제로 잘린 값이라 틱톡에
+    # 쓰면 문장이 중간에 잘린다. 틱톡 캡션 제한은 2200자로 여유가 있으니, 페이스북과
+    # 동일하게 컷 없는 ig_caption을 쓴다(2026-09-10).
     tiktok_out_path = work_dir / "tiktok_result.json"
     tiktok_ok = soft_step("틱톡 초안 전달", lambda: run_captured([
         "python3", str(HERE / "post_tiktok.py"),
-        "--video", str(final_video), "--caption-hint", script_data["x_post"], "--out", str(tiktok_out_path),
+        "--video", str(final_video), "--caption-hint", ig_caption, "--out", str(tiktok_out_path),
     ]))
     # 틱톡은 API로 캡션을 못 넣어 앱에서 직접 붙여넣어야 하므로, 요약 메시지에 섞이지 않게
-    # x_post(고지 문구+설명+해시태그가 다 포함된 완성 캡션) 자체를 단독 메시지로 보내
-    # 그대로 복사해 붙여넣을 수 있게 한다.
-    if tiktok_ok and script_data.get("x_post"):
-        notify(script_data["x_post"])
+    # ig_caption(고지 문구+설명+해시태그가 다 포함된, 잘리지 않은 완성 캡션) 자체를 단독
+    # 메시지로 보내 그대로 복사해 붙여넣을 수 있게 한다.
+    if tiktok_ok and ig_caption:
+        notify(ig_caption)
 
     # 9. 유튜브 댓글 (부가, 재시도 포함)
     comment_text = (
