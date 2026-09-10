@@ -220,7 +220,7 @@ def main():
     # 7. 유튜브 업로드 (필수)
     video_id_path = work_dir / "video_id.json"
     tags = upload_youtube.build_tags(product)
-    run([
+    upload_cmd = [
         "python3", str(HERE / "upload_youtube.py"),
         "--video", str(final_video),
         "--title", script_data["youtube_title"],
@@ -228,7 +228,10 @@ def main():
         "--tags", ",".join(tags),
         "--coupang-url", coupang_url,
         "--out", str(video_id_path),
-    ])
+    ]
+    if product_rank is not None:
+        upload_cmd += ["--rank", str(product_rank)]
+    run(upload_cmd)
     video_info = json.loads(video_id_path.read_text(encoding="utf-8"))
     video_id = video_info["video_id"]
     global uploaded_video_url
@@ -236,9 +239,20 @@ def main():
     upload_youtube.backup_product_image(video_id, product_image_path)
 
     # 8. X 포스트 (부가) — 2026-08-27: 쿠팡 상품 이미지 첨부 추가
+    # 2026-09-10: x_post는 gen_script.py에서 이미 280자 예산에 맞춰 트림된 값이라
+    # (X_POST_MAX_LEN) 뒤에 뭘 더 붙이면 넘칠 수 있음 — 과거 이 채널에서 X용 280자컷
+    # 로직이 다른 캡션으로 새어들어간 사고가 있었어서(틱톡 캡션 관련) 여기선 짧은
+    # 태그만 쓰고, 넘치면 본문 쪽을 줄여서라도 280자를 반드시 지킨다.
+    x_post_text = script_data["x_post"]
+    if product_rank is not None:
+        rank_tag = f" [No.{product_rank}]"
+        if len(x_post_text) + len(rank_tag) <= 280:
+            x_post_text = f"{x_post_text}{rank_tag}"
+        else:
+            x_post_text = f"{x_post_text[:280 - len(rank_tag) - 1].rstrip()}…{rank_tag}"
     soft_step("X 포스트", lambda: run_captured([
         "python3", str(HERE / "post_x.py"),
-        "--text", script_data["x_post"], "--image", str(product_image_path),
+        "--text", x_post_text, "--image", str(product_image_path),
     ]))
 
     # 8.5. 인스타그램 Reels 발행 (부가) — IG_USER_ID/IG_ACCESS_TOKEN 미설정 시
@@ -247,10 +261,11 @@ def main():
     ig_out_path = work_dir / "instagram_result.json"
     ig_caption = script_data.get("ig_caption") or script_data["x_post"]
     # 2026-09-10: 나중에 부업실험실 링크 페이지에서 "몇 번 상품이었더라" 검색해서 찾을 수
-    # 있도록 순번을 캡션에 명시(사용자 요청). product_rank가 None이면(링크 페이지 업데이트
-    # 실패) 문구를 아예 생략 — 존재하지도 않는 번호를 안내하면 안 되므로.
+    # 있도록 순번을 캡션에 명시(사용자 요청 — "번호를 강조해서 올려"). 끝에 덧붙이면
+    # 다들 안 읽는 꼬리말이 되니, 맨 앞에 둬서 가장 먼저 보이게 함. product_rank가
+    # None이면(링크 페이지 업데이트 실패) 문구를 아예 생략 — 없는 번호를 안내 금지.
     if product_rank is not None:
-        ig_caption = f"{ig_caption}\n\n🔎 프로필 링크에서 [{product_rank}]번으로 검색하면 바로 찾을 수 있어요"
+        ig_caption = f"\U0001F50E [No.{product_rank}] 이 번호로 프로필 링크에서 다시 찾을 수 있어요\n\n{ig_caption}"
     soft_step("인스타그램 Reels", lambda: run_captured([
         "python3", str(HERE / "post_instagram.py"),
         "--video", str(final_video), "--caption", ig_caption, "--out", str(ig_out_path),
@@ -282,8 +297,9 @@ def main():
         notify(ig_caption)
 
     # 9. 유튜브 댓글 (부가, 재시도 포함)
+    rank_prefix = f"[No.{product_rank}] " if product_rank is not None else ""
     comment_text = (
-        f"영상에서 소개한 {product['productName'][:20]}, 여기서 바로 확인하세요 \U0001F449 {coupang_url}"
+        f"{rank_prefix}영상에서 소개한 {product['productName'][:20]}, 여기서 바로 확인하세요 \U0001F449 {coupang_url}"
     )
     soft_step("유튜브 댓글", lambda: run_captured([
         "python3", str(HERE / "post_comment.py"),

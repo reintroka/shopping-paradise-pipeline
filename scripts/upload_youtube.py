@@ -98,7 +98,8 @@ def get_credentials():
     return creds
 
 
-def upload(video_path: str, title: str, description: str, tags: list[str], coupang_url: str) -> str:
+def upload(video_path: str, title: str, description: str, tags: list[str], coupang_url: str,
+           rank: int | None = None) -> str:
     creds = get_credentials()
     youtube = build("youtube", "v3", credentials=creds)
 
@@ -108,7 +109,12 @@ def upload(video_path: str, title: str, description: str, tags: list[str], coupa
         raise RuntimeError(f"채널 불일치! 예상: {EXPECTED_CHANNEL_TITLE}, 실제: {actual_title}. 업로드 중단.")
     print(f"[채널 확인] {actual_title}")
 
+    # 2026-09-10: 사용자 요청 — 나중에 부업실험실 링크 페이지에서 번호로 다시 찾을 수
+    # 있게, 설명란 맨 앞(가장 눈에 띄는 자리)에 순번을 강조. rank가 없으면(링크 페이지
+    # 업데이트 실패) 존재하지 않는 번호를 안내하지 않도록 통째로 생략.
+    rank_line = f"\U0001F50E [No.{rank}] 프로필 링크에서 이 번호로 검색하면 다시 찾을 수 있어요\n\n" if rank is not None else ""
     full_description = (
+        f"{rank_line}"
         f"{description}\n\n"
         f"\U0001F517 상품 확인: {coupang_url}\n\n"
         f"{COUPANG_DISCLOSURE}\n{AI_DISCLOSURE_TEXT}\n\n"
@@ -144,9 +150,10 @@ if __name__ == "__main__":
     p.add_argument("--description", required=True)
     p.add_argument("--tags", required=True, help="쉼표로 구분된 태그")
     p.add_argument("--coupang-url", required=True)
+    p.add_argument("--rank", type=int, default=None, help="부업실험실 링크 페이지 순번 (없으면 설명란 번호 문구 생략)")
     p.add_argument("--out", required=True, help="video_id를 저장할 파일 경로")
     args = p.parse_args()
 
-    vid = upload(args.video, args.title, args.description, args.tags.split(","), args.coupang_url)
+    vid = upload(args.video, args.title, args.description, args.tags.split(","), args.coupang_url, rank=args.rank)
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump({"video_id": vid, "url": f"https://youtu.be/{vid}"}, f, ensure_ascii=False, indent=2)

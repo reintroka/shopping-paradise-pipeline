@@ -78,10 +78,16 @@ def _rank_badge_path(work_dir: Path) -> Path | None:
     return p if p.exists() else None
 
 
-def _rank_badge_x(path: Path) -> int:
-    from PIL import Image as _Image
-    w = _Image.open(path).width
-    return 1080 - RANK_BADGE_MARGIN_R - w
+def _rank_badge_pulse_lines(prev: str, badge_idx: int, out_label: str) -> list[str]:
+    """CTA 버튼과 같은 사인파 스케일 펄스(±6%)로 배지를 미세하게 맥동시켜 시선을 끈다
+    (2026-09-10, 사용자 피드백 "눈에 띄게 해야지" — 처음엔 고정 크기였음). 스케일이
+    프레임마다 바뀌므로 x도 'overlay 폭 기준 우측 40px 마진'을 매 프레임 다시 계산한다
+    (파이썬에서 정적으로 계산한 좌표를 쓰면 펄스로 커질 때 화면 밖으로 삐져나감)."""
+    return [
+        f"[{badge_idx}:v]scale=w='iw*(1+0.06*sin(2*3.14159265*t/1.2))':"
+        f"h='ih*(1+0.06*sin(2*3.14159265*t/1.2))':eval=frame[badgepulse];\n",
+        f"[{prev}][badgepulse]overlay=x='1080-{RANK_BADGE_MARGIN_R}-w':y={RANK_BADGE_Y}:eval=frame:shortest=1[{out_label}];\n",
+    ]
 
 
 def _beat_duration(work_dir: Path, i: int) -> float:
@@ -197,8 +203,7 @@ def build_middle_segment(work_dir: Path, durs, starts, ends, total_dur: float) -
     prev = "u1b"
     next_free_idx = ai_idx + 1
     if rank_badge_path:
-        bx = _rank_badge_x(rank_badge_path)
-        lines.append(f"[{prev}][{next_free_idx}:v]overlay={bx}:{RANK_BADGE_Y}:shortest=1[u1c];")
+        lines += _rank_badge_pulse_lines(prev, next_free_idx, "u1c")
         prev = "u1c"
         next_free_idx += 1
 
@@ -268,8 +273,7 @@ def build_hook_segment(work_dir: Path) -> Path:
     prev = "u3"
     next_idx = 4
     if badge_path:
-        bx = _rank_badge_x(badge_path)
-        lines.append(f"[{prev}][{next_idx}:v]overlay={bx}:{RANK_BADGE_Y}:shortest=1[u3b];\n")
+        lines += _rank_badge_pulse_lines(prev, next_idx, "u3b")
         cmd += ["-loop", "1", "-i", str(badge_path)]
         prev = "u3b"
         next_idx += 1
@@ -307,8 +311,7 @@ def build_cta_segment(work_dir: Path) -> Path:
     prev = "u2"
     next_idx = 3
     if badge_path:
-        bx = _rank_badge_x(badge_path)
-        lines.append(f"[{prev}][{next_idx}:v]overlay={bx}:{RANK_BADGE_Y}:shortest=1[u2b];\n")
+        lines += _rank_badge_pulse_lines(prev, next_idx, "u2b")
         cmd += ["-loop", "1", "-i", str(badge_path)]
         prev = "u2b"
         next_idx += 1

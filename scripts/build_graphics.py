@@ -356,21 +356,28 @@ def build_rank_badge(out_dir: Path, rank: int):
     로고(LOGO_XY, 좌상단)와 대칭되는 우상단 빈 공간에 배치 — 스펙 순서를 나타내는
     step_badge(01/02/03, BADGE_XY=(720,400))와는 자리도 의미도 다르므로 헷갈리지 않게
     스타일(원형 대신 알약형 태그)도 다르게 잡음."""
-    f_label = sfont(22, "Medium")
-    f_num = sfont(34, "Bold")
-    label_text = "링크페이지 검색번호"
+    # 2026-09-10: 처음엔 AI고지 태그 정도 크기로 만들었는데 사용자 피드백("눈에 띄게
+    # 해야지") — 폰트/패딩을 확 키우고(가격 텍스트급), assemble_video.py에서 CTA버튼과
+    # 같은 방식(사인파 스케일 펄스)으로 미세하게 맥동시켜 시선을 끌게 함.
+    f_label = sfont(28, "SemiBold")
+    f_num = sfont(48, "Bold")
+    label_text = "검색번호"
     num_text = f"No.{rank}"
-    tw_label = tracked_width(label_text, f_label, 0)
+    tw_label = tracked_width(label_text, f_label, 1)
     tw_num = tracked_width(num_text, f_num, 1)
-    w = int(max(tw_label, tw_num) + 56)
-    h = 100
+    w = int(max(tw_label, tw_num) + 80)
+    h = 138
     im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    d.rounded_rectangle([0, 0, w - 1, h - 1], radius=16, fill=(20, 16, 12, 175), outline=(*GOLD[:3], 210), width=2)
-    d.text(((w - tw_label) / 2, 14), label_text, font=f_label, fill=(225, 213, 190, 235))
+    glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).rounded_rectangle([4, 4, w - 5, h - 5], radius=22, fill=(255, 214, 140, 130))
+    im.alpha_composite(glow.filter(ImageFilter.GaussianBlur(10)))
+    d.rounded_rectangle([0, 0, w - 1, h - 1], radius=20, fill=(20, 16, 12, 210), outline=GOLD_LIGHT, width=3)
+    dl = ImageDraw.Draw(im)
+    draw_tracked(dl, ((w - tw_label) / 2, 16), label_text, f_label, (235, 224, 200, 240), 1)
     dtxt = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     dd = ImageDraw.Draw(dtxt)
-    draw_tracked(dd, ((w - tw_num) / 2, 50), num_text, f_num, GOLD_LIGHT, 1)
+    draw_tracked(dd, ((w - tw_num) / 2, 62), num_text, f_num, GOLD_LIGHT, 1, stroke_width=1, stroke_fill=GOLD_LIGHT)
     im.alpha_composite(dtxt)
     im.save(out_dir / "rank_badge.png")
 
