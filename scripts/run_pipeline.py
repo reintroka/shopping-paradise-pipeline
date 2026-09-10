@@ -10,6 +10,8 @@
        (2026-09-10, 원래 10번이었던 걸 앞당김)
   3. 상품 이미지 다운로드
   4. 그래픽 생성 (build_graphics)
+  4.5. 상품 AI영상 생성 (generate_product_video, Seedance 2-mini) — 실패해도 계속 진행,
+       assemble_video.py가 정지이미지로 자동 폴백 (2026-09-11 도입)
   5. HeyGen 훅/CTA 영상 생성 (heygen_gen) — 여기서부터 비용 발생
   5.5. 스펙 설명 나레이션 생성 (google_tts, Google Cloud TTS — 2026-08-27 헤이젠에서 교체)
   6. ffmpeg 최종 조립 (assemble_video)
@@ -197,6 +199,17 @@ def main():
         script_data["cta_speech"],
         rank=product_rank,
     )
+
+    # 4.5. 상품 AI영상 생성 (부가, 2026-09-11 도입) — 정지사진 대신 Seedance 2-mini로
+    # 실제 회전하는 4초 클립을 만들어 반응률을 높이려는 시도(사용자 요청, 클립당 약
+    # $0.164). 실패해도(크레딧/네트워크/타임아웃 등 무엇이든) product_video_raw.mp4가
+    # 안 만들어질 뿐이고, assemble_video.py가 그 파일 존재여부로 자동 판단해 기존
+    # 정지이미지+크래시줌 경로로 조용히 폴백하므로 발행 자체는 절대 막히지 않는다.
+    product_video_path = work_dir / "product_video_raw.mp4"
+    soft_step("상품 AI영상 생성", lambda: run_captured([
+        "python3", str(HERE / "generate_product_video.py"),
+        "--image", str(product_image_path), "--out", str(product_video_path),
+    ]))
 
     # 5. HeyGen 생성 (비용 발생 지점)
     char_dir = REPO_ROOT / "assets" / "characters" / args.character

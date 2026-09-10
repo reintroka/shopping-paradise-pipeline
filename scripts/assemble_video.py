@@ -157,6 +157,60 @@ def build_audio_timeline(work_dir: Path, durs, starts, ends) -> Path:
     return work_dir / "combined_audio.wav"
 
 
+def _build_product_video_cell(work_dir: Path, total_dur: float) -> Path | None:
+    """product_video_raw.mp4(generate_product_video.py가 만든 4초 AI 회전영상)가 있으면
+    라운드마스크+골드링을 씌워 정지이미지 product_framed.png와 같은 자리에 넣을 수 있는
+    형태로 만든다(2026-09-11, 사용자 요청 — 반응 저조한 정지이미지를 실제 모션으로).
+    없으면(생성 실패/미설정) None을 반환해서 호출부가 기존 정지이미지 경로로 폴백하게 함.
+
+    4초 원본은 정방향+역방향을 이어붙인 "부메랑" 루프로 total_dur까지 채운다 — 그냥
+    -stream_loop로 하드컷 반복하면 4초마다 티나는 점프컷이 생기는데, 부메랑은 이음매가
+    안 보임(재생↔역재생 경계가 항상 같은 프레임이라 끊김이 없음).
+    """
+    raw = work_dir / "product_video_raw.mp4"
+    mask = work_dir / "round_mask.png"
+    ring = work_dir / "product_ring.png"
+    backdrop = work_dir / "product_video_backdrop.png"
+    if not (raw.exists() and mask.exists() and ring.exists() and backdrop.exists()):
+        return None
+
+    reversed_p = work_dir / "_pv_reversed.mp4"
+    forward_p = work_dir / "_pv_forward.mp4"
+    boomerang_p = work_dir / "_pv_boomerang.mp4"
+    out = work_dir / "product_video_cell.mp4"
+    try:
+        run(["ffmpeg", "-y", "-v", "error", "-i", str(raw), "-vf", "reverse", "-an",
+             "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", str(reversed_p)])
+        run(["ffmpeg", "-y", "-v", "error", "-i", str(raw), "-an",
+             "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", str(forward_p)])
+        concat_list = work_dir / "_pv_concat.txt"
+        concat_list.write_text(f"file '{forward_p.name}'\nfile '{reversed_p.name}'\n", encoding="utf-8")
+        run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(concat_list),
+             "-c", "copy", str(boomerang_p)])
+
+        filter_txt = (
+            "[0:v]scale=600:600,setsar=1,format=yuva420p[vid];"
+            "[1:v]format=gray[m];[vid][m]alphamerge[vidm];"
+            "[2:v]format=rgba[bg2];[bg2][vidm]overlay=30:30:shortest=0[step1];"
+            "[step1][3:v]overlay=0:0:shortest=0[out]"
+        )
+        run(["ffmpeg", "-y", "-v", "error",
+             "-stream_loop", "-1", "-i", str(boomerang_p),
+             "-loop", "1", "-i", str(mask),
+             "-loop", "1", "-i", str(backdrop),
+             "-loop", "1", "-i", str(ring),
+             "-filter_complex", filter_txt,
+             "-map", "[out]", "-t", f"{total_dur:.2f}", "-r", "25",
+             "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", str(out)])
+    except subprocess.CalledProcessError as e:
+        print(f"[assemble_video] 상품영상 합성 실패, 정지이미지로 폴백: {e}")
+        return None
+    finally:
+        for p in (reversed_p, forward_p, boomerang_p, work_dir / "_pv_concat.txt"):
+            p.unlink(missing_ok=True)
+    return out
+
+
 def build_middle_segment(work_dir: Path, durs, starts, ends, total_dur: float) -> Path:
     n = len(durs)
     zoom_cuts = starts
@@ -167,20 +221,45 @@ def build_middle_segment(work_dir: Path, durs, starts, ends, total_dur: float) -
     zoom_expr += inner
     zoom_expr += ")" * (n - 1)
 
-    lines = []
-    lines.append("[0:v]scale=1080:1920[bg];")
-    lines.append(f"[bg][1:v]overlay={SHADOW_XY[0]}:{SHADOW_XY[1]}:shortest=1[s0];")
-    lines.append(f"[s0][2:v]overlay={PRODUCT_XY[0]}:{PRODUCT_XY[1]}:shortest=1[s1];")
-    lines.append(f"[s1][3:v]overlay={REFLECTION_XY[0]}:{REFLECTION_XY[1]}:shortest=1[s1b];")
-    lines.append(f"[s1b][4:v]overlay={TITLE_XY[0]}:{TITLE_XY[1]}:shortest=1[s2];")
+    product_video_path = _build_product_video_cell(work_dir, total_dur)
 
+    lines = []
+    cmd = ["ffmpeg", "-y", "-v", "error"]
+    next_idx = [0]
+
+    def add_input(*args) -> int:
+        cmd.extend(args)
+        i = next_idx[0]
+        next_idx[0] += 1
+        return i
+
+    bg_idx = add_input("-loop", "1", "-i", str(work_dir / "bg_bright.png"))
+    lines.append(f"[{bg_idx}:v]scale=1080:1920[bg];")
+    shadow_idx = add_input("-loop", "1", "-i", str(work_dir / "product_shadow.png"))
+    lines.append(f"[bg][{shadow_idx}:v]overlay={SHADOW_XY[0]}:{SHADOW_XY[1]}:shortest=1[s0];")
+
+    if product_video_path:
+        # 2026-09-11: AI영상은 이미 배경패치+골드링까지 합성된 상태(product_video_cell,
+        # 660x660)라 정지이미지 경로의 반사(reflection) 레이어는 필요 없음 — 회전하는
+        # 영상에 정지된 반사를 겹치면 오히려 부자연스러워서 의도적으로 생략.
+        product_idx = add_input("-i", str(product_video_path))
+        lines.append(f"[s0][{product_idx}:v]overlay={PRODUCT_XY[0]}:{PRODUCT_XY[1]}:shortest=1[s1b];")
+    else:
+        product_idx = add_input("-loop", "1", "-i", str(work_dir / "product_framed.png"))
+        lines.append(f"[s0][{product_idx}:v]overlay={PRODUCT_XY[0]}:{PRODUCT_XY[1]}:shortest=1[s1];")
+        reflection_idx = add_input("-loop", "1", "-i", str(work_dir / "product_reflection.png"))
+        lines.append(f"[s1][{reflection_idx}:v]overlay={REFLECTION_XY[0]}:{REFLECTION_XY[1]}:shortest=1[s1b];")
+
+    title_idx = add_input("-loop", "1", "-i", str(work_dir / "title_block.png"))
+    lines.append(f"[s1b][{title_idx}:v]overlay={TITLE_XY[0]}:{TITLE_XY[1]}:shortest=1[s2];")
+
+    card_indices = [add_input("-loop", "1", "-i", str(work_dir / f"gold_card{i+1}.png")) for i in range(n)]
     card_labels = []
-    for i in range(n):
-        idx = 5 + i
+    for i, ci in enumerate(card_indices):
         fade_in_st = 0.0 if i == 0 else max(0.0, starts[i] - CARD_FADEIN_LEAD)
         fade_out_st = (total_dur - CARD_FADE) if i == n - 1 else (ends[i] + CARD_FADEOUT_LEAD)
         lines.append(
-            f"[{idx}:v]fade=t=in:st={fade_in_st:.3f}:d={CARD_FADE}:alpha=1,"
+            f"[{ci}:v]fade=t=in:st={fade_in_st:.3f}:d={CARD_FADE}:alpha=1,"
             f"fade=t=out:st={fade_out_st:.3f}:d={CARD_FADE}:alpha=1[c{i}];"
         )
         card_labels.append(f"c{i}")
@@ -196,67 +275,48 @@ def build_middle_segment(work_dir: Path, durs, starts, ends, total_dur: float) -
     )
     lines.append("[zoomed]crop=1080:1920:(in_w-1080)/2:(in_h-1920)/2[punched];")
 
-    flash_idx = 5 + n
+    flash_input_idx = add_input("-loop", "1", "-i", str(work_dir / "flash_white.png"))
     flash_conds = "+".join(f"between(t\\,{ends[i]:.3f}\\,{ends[i]+FLASH_DUR:.3f})" for i in range(n - 1))
     if flash_conds:
-        lines.append(f"[punched][{flash_idx}:v]overlay=0:0:enable='{flash_conds}':shortest=1[flashed];")
+        lines.append(f"[punched][{flash_input_idx}:v]overlay=0:0:enable='{flash_conds}':shortest=1[flashed];")
     else:
         lines.append("[punched]copy[flashed];")
 
-    logo_idx = flash_idx + 1
-    ai_idx = logo_idx + 1
+    logo_idx = add_input("-loop", "1", "-i", str(work_dir / "logo_xl.png"))
     lines.append(f"[flashed][{logo_idx}:v]overlay={LOGO_XY[0]}:{LOGO_XY[1]}:shortest=1[u1];")
+    ai_idx = add_input("-loop", "1", "-i", str(work_dir / "ai_tag.png"))
     lines.append(f"[u1][{ai_idx}:v]overlay={AI_TAG_XY[0]}:{AI_TAG_XY[1]}:shortest=1[u1b];")
 
     rank_badge_path = _rank_badge_path(work_dir)
     prev = "u1b"
-    next_free_idx = ai_idx + 1
     if rank_badge_path:
-        lines += _rank_badge_pulse_lines(prev, next_free_idx, "u1c", RANK_BADGE_ANCHOR_PRODUCT)
+        badge_idx = add_input("-loop", "1", "-i", str(rank_badge_path))
+        lines += _rank_badge_pulse_lines(prev, badge_idx, "u1c", RANK_BADGE_ANCHOR_PRODUCT)
         prev = "u1c"
-        next_free_idx += 1
 
     switches = [0.0]
     for i in range(n - 1):
         switches.append(ends[i] + SWITCH_OFFSET)
     switches.append(total_dur)
 
-    badge_base = next_free_idx
     for i in range(n):
-        idx = badge_base + i
+        step_idx = add_input("-loop", "1", "-i", str(work_dir / f"step_badge{i+1}.png"))
         lo = switches[i] + (SWITCH_EPS / 2 if i > 0 else 0)
         hi = switches[i + 1] - (SWITCH_EPS / 2 if i < n - 1 else 0)
         nxt = f"ub{i}"
-        lines.append(f"[{prev}][{idx}:v]overlay={BADGE_XY[0]}:{BADGE_XY[1]}:enable='between(t\\,{lo:.3f}\\,{hi:.3f})':shortest=1[{nxt}];")
+        lines.append(f"[{prev}][{step_idx}:v]overlay={BADGE_XY[0]}:{BADGE_XY[1]}:enable='between(t\\,{lo:.3f}\\,{hi:.3f})':shortest=1[{nxt}];")
         prev = nxt
 
     # 2026-08-27: 설명구간 자막(카드 값 텍스트를 그대로 반복) 제거 — 카드 자체에 이미
     # 같은 문구가 적혀있어서 중복이었고, 자막 위치가 유튜브 쇼츠의 렌즈 배너와 겹치는
     # 문제도 이걸로 같이 해결됨(카드 위치를 따로 재설계할 필요가 없어짐).
-    vignette_idx = badge_base + n
+    vignette_idx = add_input("-loop", "1", "-i", str(work_dir / "vignette.png"))
     lines.append(f"[{prev}][{vignette_idx}:v]overlay=0:0:shortest=1[vout]")
 
     filter_path = work_dir / "filter_middle.txt"
     filter_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    audio_idx = vignette_idx + 1
-    cmd = ["ffmpeg", "-y", "-v", "error",
-           "-loop", "1", "-i", str(work_dir / "bg_bright.png"),
-           "-loop", "1", "-i", str(work_dir / "product_shadow.png"),
-           "-loop", "1", "-i", str(work_dir / "product_framed.png"),
-           "-loop", "1", "-i", str(work_dir / "product_reflection.png"),
-           "-loop", "1", "-i", str(work_dir / "title_block.png")]
-    for i in range(n):
-        cmd += ["-loop", "1", "-i", str(work_dir / f"gold_card{i+1}.png")]
-    cmd += ["-loop", "1", "-i", str(work_dir / "flash_white.png")]
-    cmd += ["-loop", "1", "-i", str(work_dir / "logo_xl.png")]
-    cmd += ["-loop", "1", "-i", str(work_dir / "ai_tag.png")]
-    if rank_badge_path:
-        cmd += ["-loop", "1", "-i", str(rank_badge_path)]
-    for i in range(n):
-        cmd += ["-loop", "1", "-i", str(work_dir / f"step_badge{i+1}.png")]
-    cmd += ["-loop", "1", "-i", str(work_dir / "vignette.png")]
-    cmd += ["-i", str(work_dir / "combined_audio.wav")]
+    audio_idx = add_input("-i", str(work_dir / "combined_audio.wav"))
     out_path = work_dir / "middle_segment.mp4"
     cmd += ["-filter_complex_script", str(filter_path),
             "-map", "[vout]", "-map", f"{audio_idx}:a",

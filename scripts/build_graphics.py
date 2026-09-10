@@ -444,11 +444,44 @@ def build_product_assets(out_dir: Path, product_image_path: Path, frame_w=600):
     return canvas.size
 
 
+def build_product_video_assets(out_dir: Path, frame_w=600):
+    """상품 AI영상(Seedance) 합성용 라운드마스크+골드링+배경패치 (2026-09-11 도입).
+    build_product_assets()의 정지이미지 링 스타일과 동일하게 맞춰서, AI영상이 성공하든
+    실패해서 정지이미지로 폴백하든 같은 액자처럼 보이게 한다. product.jpg가 아직 없어도
+    (다운로드 전이어도) bg_bright.png만 있으면 만들 수 있어서 build_all() 앞쪽에서
+    항상 생성 — AI영상 생성 성공 여부와 무관하게 미리 준비해두는 저비용 자산이라
+    조건부로 만들 필요가 없음.
+    """
+    radius, border = int(frame_w * 0.047), 5
+    pad = int(frame_w * 0.05)
+
+    mask = Image.new("L", (frame_w, frame_w), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, frame_w - 1, frame_w - 1], radius=radius, fill=255)
+    mask.save(out_dir / "round_mask.png")
+
+    canvas = Image.new("RGBA", (frame_w + pad * 2, frame_w + pad * 2), (0, 0, 0, 0))
+    ring = Image.new("RGBA", (frame_w, frame_w), (0, 0, 0, 0))
+    ImageDraw.Draw(ring).rounded_rectangle([0, 0, frame_w - 1, frame_w - 1], radius=radius, outline=GOLD, width=border)
+    canvas.alpha_composite(ring.filter(ImageFilter.GaussianBlur(6)), (pad, pad))
+    ImageDraw.Draw(canvas).rounded_rectangle([pad, pad, pad + frame_w - 1, pad + frame_w - 1], radius=radius, outline=GOLD, width=border)
+    canvas.save(out_dir / "product_ring.png")
+
+    # assemble_video.PRODUCT_XY(210,470)와 반드시 일치해야 함 — 실제 그 위치에 깔릴
+    # 배경(bg_bright.png의 방사형 글로우 그라데이션)을 그대로 잘라써서, AI영상의 투명
+    # 모서리 밑에 놓았을 때 이음매 없이 붙게 함.
+    product_x, product_y = 210, 470
+    canvas_size = frame_w + pad * 2
+    bg = Image.open(out_dir / "bg_bright.png").convert("RGB")
+    patch = bg.crop((product_x, product_y, product_x + canvas_size, product_y + canvas_size))
+    patch.save(out_dir / "product_video_backdrop.png")
+
+
 def build_all(out_dir: Path, product_name: str, price: str, product_image_path: Path,
               spec1, spec2, spec3, hook_speech: str, cta_speech: str,
               cta_text: str = "지금 링크 확인 ▶", rank: int | None = None):
     out_dir.mkdir(parents=True, exist_ok=True)
     build_bg(out_dir)
+    build_product_video_assets(out_dir)
     build_vignette(out_dir)
     build_flash(out_dir)
     build_ai_tag(out_dir)
