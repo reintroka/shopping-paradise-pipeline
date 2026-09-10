@@ -35,11 +35,16 @@ CAPTION_X = 80
 # 렌즈) 안내 배너와 겹친다는 사용자 스크린샷 제보도 있었음 — 자막을 없애서 둘 다 해결.
 # 훅 구간엔 카드가 없어서 자막을 그대로 유지하되, 같은 렌즈 배너 문제를 피하려고 위로 올림.
 HOOK_CAPTION_Y = 1320
-# 2026-09-10: 링크 페이지 검색번호 배지 — 로고(LOGO_XY, 좌상단 40px 마진)와 대칭되는
-# 우상단에 둠. 폭이 번호 자릿수에 따라 달라지므로 y만 고정하고 x는 각 세그먼트 빌드
-# 함수에서 실제 PNG 폭을 읽어 우측 40px 마진 기준으로 계산한다.
-RANK_BADGE_Y = 50
-RANK_BADGE_MARGIN_R = 40
+# 2026-09-10: 링크 페이지 검색번호 배지. 처음엔 우상단 고정이었는데 사용자 피드백
+# ("얼굴부분에서 강조하는게 안낫나, 네모를 사선으로 기울이고") — 아바타 얼굴 바로
+# 옆(사람 시선이 제일 먼저 가는 자리)으로 옮기고, 사선(스티커 느낌)으로 기울임.
+# hook/cta는 아바타 얼굴이 화면 중앙~오른쪽 뺨 옆 여백에 오므로 그 자리를 앵커로
+# 쓰고, middle(아바타 없음)은 대신 상품사진 카드 우상단 모서리에 "가격표 스티커"처럼
+# 겹치게 둔다 — 이 채널 상품소개 톤과도 더 잘 맞음. 앵커는 배지의 중심점이며, 회전 후
+# 실제 폭/높이가 프레임마다(펄스로) 조금씩 바뀌므로 오버레이 x/y는 항상 동적 계산한다.
+RANK_BADGE_ANCHOR_FACE = (860, 620)      # hook/cta: 아바타 뺨 옆 여백
+RANK_BADGE_ANCHOR_PRODUCT = (270, 510)   # middle: 상품 카드 좌상단 모서리(우상단은 스텝배지 01/02/03과 겹침)
+RANK_BADGE_ANGLE_DEG = -10
 # 2026-08-27: CTA 자막+버튼을 하단(1380/1580)에 두니 위치가 어색하다는 피드백 —
 # 아바타 얼굴(대략 555~930)과 두 손 모은 제스처(대략 1200~1515) 사이, 화면
 # 중앙에 가까운 빈 공간(약 930~1200)으로 옮김. hook_v2/cta_v2 원본 프레임
@@ -78,15 +83,19 @@ def _rank_badge_path(work_dir: Path) -> Path | None:
     return p if p.exists() else None
 
 
-def _rank_badge_pulse_lines(prev: str, badge_idx: int, out_label: str) -> list[str]:
-    """CTA 버튼과 같은 사인파 스케일 펄스(±6%)로 배지를 미세하게 맥동시켜 시선을 끈다
-    (2026-09-10, 사용자 피드백 "눈에 띄게 해야지" — 처음엔 고정 크기였음). 스케일이
-    프레임마다 바뀌므로 x도 'overlay 폭 기준 우측 40px 마진'을 매 프레임 다시 계산한다
-    (파이썬에서 정적으로 계산한 좌표를 쓰면 펄스로 커질 때 화면 밖으로 삐져나감)."""
+def _rank_badge_pulse_lines(prev: str, badge_idx: int, out_label: str, anchor: tuple) -> list[str]:
+    """CTA 버튼과 같은 사인파 스케일 펄스(±6%)로 배지를 미세하게 맥동시키고, 사선(-10도)으로
+    기울여 스티커처럼 보이게 한다(2026-09-10, 사용자 피드백 "눈에 띄게" + "얼굴부분에서
+    강조, 네모를 사선으로"). rotate 필터는 ow/oh를 명시해야 기울어진 모서리가 안 잘리고,
+    회전+펄스로 매 프레임 실제 크기가 바뀌므로 x/y는 항상 'anchor가 중심이 되도록' 동적
+    계산한다(고정좌표를 쓰면 커질 때 중심이 밀려 앵커에서 벗어남)."""
+    cx, cy = anchor
+    angle_rad = f"({RANK_BADGE_ANGLE_DEG}*PI/180)"
     return [
         f"[{badge_idx}:v]scale=w='iw*(1+0.06*sin(2*3.14159265*t/1.2))':"
-        f"h='ih*(1+0.06*sin(2*3.14159265*t/1.2))':eval=frame[badgepulse];\n",
-        f"[{prev}][badgepulse]overlay=x='1080-{RANK_BADGE_MARGIN_R}-w':y={RANK_BADGE_Y}:eval=frame:shortest=1[{out_label}];\n",
+        f"h='ih*(1+0.06*sin(2*3.14159265*t/1.2))':eval=frame,"
+        f"rotate={angle_rad}:c=black@0:ow=rotw({angle_rad}):oh=roth({angle_rad})[badgepulse];\n",
+        f"[{prev}][badgepulse]overlay=x='{cx}-w/2':y='{cy}-h/2':eval=frame:shortest=1[{out_label}];\n",
     ]
 
 
@@ -203,7 +212,7 @@ def build_middle_segment(work_dir: Path, durs, starts, ends, total_dur: float) -
     prev = "u1b"
     next_free_idx = ai_idx + 1
     if rank_badge_path:
-        lines += _rank_badge_pulse_lines(prev, next_free_idx, "u1c")
+        lines += _rank_badge_pulse_lines(prev, next_free_idx, "u1c", RANK_BADGE_ANCHOR_PRODUCT)
         prev = "u1c"
         next_free_idx += 1
 
@@ -273,7 +282,7 @@ def build_hook_segment(work_dir: Path) -> Path:
     prev = "u3"
     next_idx = 4
     if badge_path:
-        lines += _rank_badge_pulse_lines(prev, next_idx, "u3b")
+        lines += _rank_badge_pulse_lines(prev, next_idx, "u3b", RANK_BADGE_ANCHOR_FACE)
         cmd += ["-loop", "1", "-i", str(badge_path)]
         prev = "u3b"
         next_idx += 1
@@ -311,7 +320,7 @@ def build_cta_segment(work_dir: Path) -> Path:
     prev = "u2"
     next_idx = 3
     if badge_path:
-        lines += _rank_badge_pulse_lines(prev, next_idx, "u2b")
+        lines += _rank_badge_pulse_lines(prev, next_idx, "u2b", RANK_BADGE_ANCHOR_FACE)
         cmd += ["-loop", "1", "-i", str(badge_path)]
         prev = "u2b"
         next_idx += 1
