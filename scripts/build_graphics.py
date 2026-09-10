@@ -350,6 +350,31 @@ def build_caption(out_dir: Path, name: str, text: str, max_width=920, font_size=
     pill.save(out_dir / f"caption_{name}.png")
 
 
+def build_rank_badge(out_dir: Path, rank: int):
+    """부업실험실 링크 페이지에서 이 상품이 몇 번째 카드인지 보여주는 배지 (2026-09-10,
+    사용자 요청: 나중에 링크 페이지에서 번호로 검색해 찾을 수 있게 화면에도 노출).
+    로고(LOGO_XY, 좌상단)와 대칭되는 우상단 빈 공간에 배치 — 스펙 순서를 나타내는
+    step_badge(01/02/03, BADGE_XY=(720,400))와는 자리도 의미도 다르므로 헷갈리지 않게
+    스타일(원형 대신 알약형 태그)도 다르게 잡음."""
+    f_label = sfont(22, "Medium")
+    f_num = sfont(34, "Bold")
+    label_text = "링크페이지 검색번호"
+    num_text = f"No.{rank}"
+    tw_label = tracked_width(label_text, f_label, 0)
+    tw_num = tracked_width(num_text, f_num, 1)
+    w = int(max(tw_label, tw_num) + 56)
+    h = 100
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle([0, 0, w - 1, h - 1], radius=16, fill=(20, 16, 12, 175), outline=(*GOLD[:3], 210), width=2)
+    d.text(((w - tw_label) / 2, 14), label_text, font=f_label, fill=(225, 213, 190, 235))
+    dtxt = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    dd = ImageDraw.Draw(dtxt)
+    draw_tracked(dd, ((w - tw_num) / 2, 50), num_text, f_num, GOLD_LIGHT, 1)
+    im.alpha_composite(dtxt)
+    im.save(out_dir / "rank_badge.png")
+
+
 def build_cta_button(out_dir: Path, text="지금 링크 확인 ▶"):
     w, h = 560, 108
     btn = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -414,7 +439,7 @@ def build_product_assets(out_dir: Path, product_image_path: Path, frame_w=600):
 
 def build_all(out_dir: Path, product_name: str, price: str, product_image_path: Path,
               spec1, spec2, spec3, hook_speech: str, cta_speech: str,
-              cta_text: str = "지금 링크 확인 ▶"):
+              cta_text: str = "지금 링크 확인 ▶", rank: int | None = None):
     out_dir.mkdir(parents=True, exist_ok=True)
     build_bg(out_dir)
     build_vignette(out_dir)
@@ -422,6 +447,11 @@ def build_all(out_dir: Path, product_name: str, price: str, product_image_path: 
     build_ai_tag(out_dir)
     build_logo_xl(out_dir)
     build_title_block(out_dir, product_name, price)
+    # 2026-09-10: rank가 없으면(링크 페이지 업데이트 실패) 배지 자체를 생성하지 않음 —
+    # assemble_video.py가 이 파일 존재 여부로 배지 오버레이를 건너뛰므로 존재하지도
+    # 않는 번호를 화면에 보여주는 사고를 원천 차단.
+    if rank is not None:
+        build_rank_badge(out_dir, rank)
     canvas_size = build_product_assets(out_dir, product_image_path)
     for i, (label, value) in enumerate((spec1, spec2, spec3), start=1):
         build_glass_card(out_dir, i, label, value)

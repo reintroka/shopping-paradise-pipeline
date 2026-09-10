@@ -35,6 +35,11 @@ CAPTION_X = 80
 # 렌즈) 안내 배너와 겹친다는 사용자 스크린샷 제보도 있었음 — 자막을 없애서 둘 다 해결.
 # 훅 구간엔 카드가 없어서 자막을 그대로 유지하되, 같은 렌즈 배너 문제를 피하려고 위로 올림.
 HOOK_CAPTION_Y = 1320
+# 2026-09-10: 링크 페이지 검색번호 배지 — 로고(LOGO_XY, 좌상단 40px 마진)와 대칭되는
+# 우상단에 둠. 폭이 번호 자릿수에 따라 달라지므로 y만 고정하고 x는 각 세그먼트 빌드
+# 함수에서 실제 PNG 폭을 읽어 우측 40px 마진 기준으로 계산한다.
+RANK_BADGE_Y = 50
+RANK_BADGE_MARGIN_R = 40
 # 2026-08-27: CTA 자막+버튼을 하단(1380/1580)에 두니 위치가 어색하다는 피드백 —
 # 아바타 얼굴(대략 555~930)과 두 손 모은 제스처(대략 1200~1515) 사이, 화면
 # 중앙에 가까운 빈 공간(약 930~1200)으로 옮김. hook_v2/cta_v2 원본 프레임
@@ -64,6 +69,19 @@ CARD_FADEOUT_LEAD = 0.035
 def run(cmd, **kw):
     print("+", " ".join(cmd))
     subprocess.run(cmd, check=True, **kw)
+
+
+def _rank_badge_path(work_dir: Path) -> Path | None:
+    """rank_badge.png가 있으면(=링크 페이지 등록 성공) 그 경로를, 없으면 None을 반환.
+    세 세그먼트(훅/미들/CTA) 빌드 함수가 전부 이걸로 배지 오버레이 여부를 결정한다."""
+    p = work_dir / "rank_badge.png"
+    return p if p.exists() else None
+
+
+def _rank_badge_x(path: Path) -> int:
+    from PIL import Image as _Image
+    w = _Image.open(path).width
+    return 1080 - RANK_BADGE_MARGIN_R - w
 
 
 def _beat_duration(work_dir: Path, i: int) -> float:
@@ -175,13 +193,21 @@ def build_middle_segment(work_dir: Path, durs, starts, ends, total_dur: float) -
     lines.append(f"[flashed][{logo_idx}:v]overlay={LOGO_XY[0]}:{LOGO_XY[1]}:shortest=1[u1];")
     lines.append(f"[u1][{ai_idx}:v]overlay={AI_TAG_XY[0]}:{AI_TAG_XY[1]}:shortest=1[u1b];")
 
+    rank_badge_path = _rank_badge_path(work_dir)
+    prev = "u1b"
+    next_free_idx = ai_idx + 1
+    if rank_badge_path:
+        bx = _rank_badge_x(rank_badge_path)
+        lines.append(f"[{prev}][{next_free_idx}:v]overlay={bx}:{RANK_BADGE_Y}:shortest=1[u1c];")
+        prev = "u1c"
+        next_free_idx += 1
+
     switches = [0.0]
     for i in range(n - 1):
         switches.append(ends[i] + SWITCH_OFFSET)
     switches.append(total_dur)
 
-    badge_base = ai_idx + 1
-    prev = "u1b"
+    badge_base = next_free_idx
     for i in range(n):
         idx = badge_base + i
         lo = switches[i] + (SWITCH_EPS / 2 if i > 0 else 0)
@@ -211,6 +237,8 @@ def build_middle_segment(work_dir: Path, durs, starts, ends, total_dur: float) -
     cmd += ["-loop", "1", "-i", str(work_dir / "flash_white.png")]
     cmd += ["-loop", "1", "-i", str(work_dir / "logo_xl.png")]
     cmd += ["-loop", "1", "-i", str(work_dir / "ai_tag.png")]
+    if rank_badge_path:
+        cmd += ["-loop", "1", "-i", str(rank_badge_path)]
     for i in range(n):
         cmd += ["-loop", "1", "-i", str(work_dir / f"step_badge{i+1}.png")]
     cmd += ["-loop", "1", "-i", str(work_dir / "vignette.png")]
@@ -225,26 +253,36 @@ def build_middle_segment(work_dir: Path, durs, starts, ends, total_dur: float) -
 
 
 def build_hook_segment(work_dir: Path) -> Path:
-    filter_txt = (
-        "[0:v]scale=1080:1920,setsar=1,fps=25[base];\n"
-        f"[base][1:v]overlay={LOGO_XY[0]}:{LOGO_XY[1]}:shortest=1[u1];\n"
-        f"[u1][2:v]overlay={AI_TAG_XY[0]}:{AI_TAG_XY[1]}:shortest=1[u2];\n"
-        f"[u2][3:v]overlay={TITLE_XY[0]}:{TITLE_XY[1]}:shortest=1[u3];\n"
-        f"[u3][4:v]overlay={CAPTION_X}:{HOOK_CAPTION_Y}:shortest=1[vout];\n"
-        f"[0:a]{LOUDNORM_TARGET}[aout]\n"
-    )
-    filter_path = work_dir / "filter_hook.txt"
-    filter_path.write_text(filter_txt, encoding="utf-8")
-    out_path = work_dir / "hook_final.mp4"
+    badge_path = _rank_badge_path(work_dir)
+    lines = [
+        "[0:v]scale=1080:1920,setsar=1,fps=25[base];\n",
+        f"[base][1:v]overlay={LOGO_XY[0]}:{LOGO_XY[1]}:shortest=1[u1];\n",
+        f"[u1][2:v]overlay={AI_TAG_XY[0]}:{AI_TAG_XY[1]}:shortest=1[u2];\n",
+        f"[u2][3:v]overlay={TITLE_XY[0]}:{TITLE_XY[1]}:shortest=1[u3];\n",
+    ]
     cmd = ["ffmpeg", "-y", "-v", "error",
            "-i", str(work_dir / "hook.mp4"),
            "-loop", "1", "-i", str(work_dir / "logo_xl.png"),
            "-loop", "1", "-i", str(work_dir / "ai_tag.png"),
-           "-loop", "1", "-i", str(work_dir / "title_block.png"),
-           "-loop", "1", "-i", str(work_dir / "caption_hook.png"),
-           "-filter_complex_script", str(filter_path),
-           "-map", "[vout]", "-map", "[aout]",
-           "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(out_path)]
+           "-loop", "1", "-i", str(work_dir / "title_block.png")]
+    prev = "u3"
+    next_idx = 4
+    if badge_path:
+        bx = _rank_badge_x(badge_path)
+        lines.append(f"[{prev}][{next_idx}:v]overlay={bx}:{RANK_BADGE_Y}:shortest=1[u3b];\n")
+        cmd += ["-loop", "1", "-i", str(badge_path)]
+        prev = "u3b"
+        next_idx += 1
+    lines.append(f"[{prev}][{next_idx}:v]overlay={CAPTION_X}:{HOOK_CAPTION_Y}:shortest=1[vout];\n")
+    cmd += ["-loop", "1", "-i", str(work_dir / "caption_hook.png")]
+    lines.append(f"[0:a]{LOUDNORM_TARGET}[aout]\n")
+
+    filter_path = work_dir / "filter_hook.txt"
+    filter_path.write_text("".join(lines), encoding="utf-8")
+    out_path = work_dir / "hook_final.mp4"
+    cmd += ["-filter_complex_script", str(filter_path),
+            "-map", "[vout]", "-map", "[aout]",
+            "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(out_path)]
     run(cmd)
     return out_path
 
@@ -256,28 +294,41 @@ def build_cta_segment(work_dir: Path) -> Path:
     # 놓는다. 1줄일 때는 기존 CTA_BUTTON_Y와 사실상 같은 위치가 나옴.
     caption_h = Image.open(work_dir / "caption_cta.png").height
     button_y = max(CTA_CAPTION_Y + caption_h + CTA_CAPTION_BUTTON_GAP, CTA_BUTTON_Y)
-    filter_txt = (
-        "[0:v]scale=1080:1920,setsar=1,fps=25[base];\n"
-        f"[base][1:v]overlay={LOGO_XY[0]}:{LOGO_XY[1]}:shortest=1[u1];\n"
-        f"[u1][2:v]overlay={AI_TAG_XY[0]}:{AI_TAG_XY[1]}:shortest=1[u2];\n"
-        f"[u2][3:v]overlay={CAPTION_X}:{CTA_CAPTION_Y}:shortest=1[u3];\n"
-        "[4:v]scale=w='560*(1+0.045*sin(2*3.14159265*t/1.1))':"
-        "h='108*(1+0.045*sin(2*3.14159265*t/1.1))':eval=frame[btn];\n"
-        f"[u3][btn]overlay=x='(1080-w)/2':y={button_y}:eval=frame:shortest=1[vout];\n"
-        f"[0:a]{LOUDNORM_TARGET}[aout]\n"
-    )
-    filter_path = work_dir / "filter_cta.txt"
-    filter_path.write_text(filter_txt, encoding="utf-8")
-    out_path = work_dir / "cta_final.mp4"
+    badge_path = _rank_badge_path(work_dir)
+    lines = [
+        "[0:v]scale=1080:1920,setsar=1,fps=25[base];\n",
+        f"[base][1:v]overlay={LOGO_XY[0]}:{LOGO_XY[1]}:shortest=1[u1];\n",
+        f"[u1][2:v]overlay={AI_TAG_XY[0]}:{AI_TAG_XY[1]}:shortest=1[u2];\n",
+    ]
     cmd = ["ffmpeg", "-y", "-v", "error",
            "-i", str(work_dir / "cta.mp4"),
            "-loop", "1", "-i", str(work_dir / "logo_xl.png"),
-           "-loop", "1", "-i", str(work_dir / "ai_tag.png"),
-           "-loop", "1", "-i", str(work_dir / "caption_cta.png"),
-           "-loop", "1", "-i", str(work_dir / "cta_button.png"),
-           "-filter_complex_script", str(filter_path),
-           "-map", "[vout]", "-map", "[aout]",
-           "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(out_path)]
+           "-loop", "1", "-i", str(work_dir / "ai_tag.png")]
+    prev = "u2"
+    next_idx = 3
+    if badge_path:
+        bx = _rank_badge_x(badge_path)
+        lines.append(f"[{prev}][{next_idx}:v]overlay={bx}:{RANK_BADGE_Y}:shortest=1[u2b];\n")
+        cmd += ["-loop", "1", "-i", str(badge_path)]
+        prev = "u2b"
+        next_idx += 1
+    lines.append(f"[{prev}][{next_idx}:v]overlay={CAPTION_X}:{CTA_CAPTION_Y}:shortest=1[u3];\n")
+    cmd += ["-loop", "1", "-i", str(work_dir / "caption_cta.png")]
+    btn_idx = next_idx + 1
+    lines.append(
+        "[{}:v]scale=w='560*(1+0.045*sin(2*3.14159265*t/1.1))':"
+        "h='108*(1+0.045*sin(2*3.14159265*t/1.1))':eval=frame[btn];\n".format(btn_idx)
+    )
+    cmd += ["-loop", "1", "-i", str(work_dir / "cta_button.png")]
+    lines.append(f"[u3][btn]overlay=x='(1080-w)/2':y={button_y}:eval=frame:shortest=1[vout];\n")
+    lines.append(f"[0:a]{LOUDNORM_TARGET}[aout]\n")
+
+    filter_path = work_dir / "filter_cta.txt"
+    filter_path.write_text("".join(lines), encoding="utf-8")
+    out_path = work_dir / "cta_final.mp4"
+    cmd += ["-filter_complex_script", str(filter_path),
+            "-map", "[vout]", "-map", "[aout]",
+            "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(out_path)]
     run(cmd)
     return out_path
 

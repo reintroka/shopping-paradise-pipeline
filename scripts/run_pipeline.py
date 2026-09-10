@@ -5,6 +5,9 @@
 순서:
   1. 쿠팡 상품 선정 (pick_product) — 실패하면 중단
   2. Gemini 대본 생성 (gen_script) — 실패하면 중단
+  2.5. 부업실험실 링크 페이지 카드 등록 (update_link_page) — 실패해도 계속 진행. 여기서
+       확정된 순번(product_rank)을 화면 번호 배지(4번)와 릴스 캡션(8.5번)에 씀
+       (2026-09-10, 원래 10번이었던 걸 앞당김)
   3. 상품 이미지 다운로드
   4. 그래픽 생성 (build_graphics)
   5. HeyGen 훅/CTA 영상 생성 (heygen_gen) — 여기서부터 비용 발생
@@ -17,7 +20,7 @@
   8.6. 틱톡 받은편지함(초안) 전달 (post_tiktok, 앱 심사 전이라 자동 공개발행 불가 —
        사람이 앱에서 최종 게시해야 함) — 실패해도 계속 진행
   9. 유튜브 댓글 홍보 (post_comment, 재시도 포함) — 실패해도 계속 진행
-  10. 부업실험실 링크 페이지 업데이트 (update_link_page) — 실패해도 계속 진행
+  10. (링크 페이지 업데이트는 2.5번으로 이동함)
   11. shorts_log.json에 이번 발행 기록 추가
   12. 숏츠가 6개(3일치) 쌓였으면 롱폼으로 이어붙여 별도 업로드 (compile_longform) — 실패해도 계속 진행
   13. used_products.json + shorts_log.json(+longform_counter.json) 변경사항 커밋+푸시 (파이프라인 레포 자체)
@@ -156,6 +159,24 @@ def main():
     script_path = work_dir / "script.json"
     run(["python3", str(HERE / "gen_script.py"), "--product-json", str(product_path), "--out", str(script_path)])
     script_data = json.loads(script_path.read_text(encoding="utf-8"))
+    coupang_url = product.get("shortUrl") or product["productUrl"]
+
+    # 2.5. 링크 페이지 카드 등록 (부가) — 2026-09-10: 원래 10번 단계(인스타 발행 이후)였던 걸
+    # 여기로 앞당김. 화면 번호 배지(build_graphics)와 릴스 캡션에 "몇 번 상품"인지 적어
+    # 나중에 링크 페이지에서 검색하기 쉽게 하려면, 실제로 카드가 등록되어 확정된 순번을
+    # 영상/캡션을 만들기 *전에* 알아야 하기 때문. add_card()가 실패해도(권한/네트워크)
+    # product_rank가 None으로 남을 뿐 파이프라인은 계속 진행되고, 배지/캡션 문구는
+    # 조건부로 생략된다(아래 build_graphics 호출, 8.5 인스타 단계 참고).
+    product_rank = None
+    try:
+        product_rank = update_link_page.add_card(
+            product["productName"][:20], f"{product['productPrice']:,}원대", coupang_url,
+            script_data["hook_speech"], image_url=product["productImage"],
+        )
+        soft_step_results.append(("링크 페이지 업데이트", True, f"{product_rank}번"))
+    except Exception as e:
+        print(f"[경고] 링크 페이지 업데이트 실패 (파이프라인은 계속 진행): {e}")
+        soft_step_results.append(("링크 페이지 업데이트", False, str(e)))
 
     # 3. 상품 이미지 다운로드
     product_image_path = work_dir / "product.jpg"
@@ -174,6 +195,7 @@ def main():
         (script_data["spec3_title"], script_data["spec3_body"]),
         script_data["hook_speech"],
         script_data["cta_speech"],
+        rank=product_rank,
     )
 
     # 5. HeyGen 생성 (비용 발생 지점)
@@ -197,7 +219,6 @@ def main():
 
     # 7. 유튜브 업로드 (필수)
     video_id_path = work_dir / "video_id.json"
-    coupang_url = product.get("shortUrl") or product["productUrl"]
     tags = upload_youtube.build_tags(product)
     run([
         "python3", str(HERE / "upload_youtube.py"),
@@ -225,6 +246,11 @@ def main():
     # (계정 연결 전까지는 파이프라인 전체에 영향 없음).
     ig_out_path = work_dir / "instagram_result.json"
     ig_caption = script_data.get("ig_caption") or script_data["x_post"]
+    # 2026-09-10: 나중에 부업실험실 링크 페이지에서 "몇 번 상품이었더라" 검색해서 찾을 수
+    # 있도록 순번을 캡션에 명시(사용자 요청). product_rank가 None이면(링크 페이지 업데이트
+    # 실패) 문구를 아예 생략 — 존재하지도 않는 번호를 안내하면 안 되므로.
+    if product_rank is not None:
+        ig_caption = f"{ig_caption}\n\n🔎 프로필 링크에서 [{product_rank}]번으로 검색하면 바로 찾을 수 있어요"
     soft_step("인스타그램 Reels", lambda: run_captured([
         "python3", str(HERE / "post_instagram.py"),
         "--video", str(final_video), "--caption", ig_caption, "--out", str(ig_out_path),
@@ -264,11 +290,8 @@ def main():
         "--video-id", video_id, "--text", comment_text,
     ]))
 
-    # 10. 링크 페이지 업데이트 (부가)
-    soft_step("링크 페이지 업데이트", lambda: update_link_page.add_card(
-        product["productName"][:20], f"{product['productPrice']:,}원대", coupang_url, script_data["hook_speech"],
-        image_url=product["productImage"],
-    ))
+    # 10. (2026-09-10: 링크 페이지 업데이트는 2.5번으로 옮김 — 화면 번호 배지/릴스 캡션에
+    # 순번을 쓰려면 영상 만들기 전에 확정돼 있어야 하기 때문. 아래 11번에서 번호 찾기 쉽게)
 
     # 11. 발행 기록 추가 (롱폼 자동 컴파일 판단용)
     # 2026-09-01: specs 추가 — 롱폼 딥다이브 나레이션(compile_longform.py)이 스펙

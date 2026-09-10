@@ -83,6 +83,7 @@ def add_card(product_name: str, price: str, coupang_url: str, hook_line: str, im
              f"Add {product_name} ({rank}번째 실험) product card"])
         push_with_retry(tmp)
     print(f"[update_link_page] 링크 페이지 업데이트 완료: {product_name} ({rank}번째 실험)")
+    return rank
 
 
 if __name__ == "__main__":
