@@ -44,6 +44,18 @@ TEXT_PRICE_FIELDS = (
     "youtube_title", "youtube_description_intro", "x_post", "ig_caption",
 )
 
+# 2026-09-11: gemini-flash-lite-latest가 프롬프트에서 명시적으로 요구한 필드 중
+# 일부(youtube_title 등 4개)를 빠뜨리고 응답한 사례가 실제 발행 실패로 이어짐 —
+# JSON 자체는 유효해서 parse_json_response는 통과하고, run_pipeline.py에서
+# script_data["youtube_title"]가 KeyError로 죽으면서 이미 완성된 영상(HeyGen 비용
+# 이미 발생)이 업로드도 못 되고 폐기됨. 응답에 이 필드들이 다 있는지 검증한다.
+REQUIRED_KEYS = (
+    "hook_title_line1", "hook_title_line2", "hook_speech", "cta_speech",
+    "spec1_title", "spec1_body", "spec2_title", "spec2_body", "spec3_title", "spec3_body",
+    "narration_script1", "narration_script2", "narration_script3",
+    "youtube_title", "youtube_description_intro", "x_post", "ig_caption",
+)
+
 X_POST_HISTORY_PATH = Path(__file__).resolve().parent.parent / "x_post_history.json"
 X_POST_HISTORY_MAX = 12
 
@@ -258,6 +270,14 @@ def main():
     )
     text = call_gemini(prompt)
     data = parse_json_response(text)
+    missing = [k for k in REQUIRED_KEYS if not data.get(k)]
+    if missing:
+        # 한 번 재시도 — 저사양 모델의 일시적 필드 누락은 재시도로 대부분 해소됨.
+        text = call_gemini(prompt)
+        data = parse_json_response(text)
+        missing = [k for k in REQUIRED_KEYS if not data.get(k)]
+    if missing:
+        raise RuntimeError(f"Gemini 응답에 필수 필드 누락(재시도 후에도): {missing}")
     data = fill_price_placeholders(data, product["productPrice"])
     if data.get("x_post"):
         save_x_post_history(history, data["x_post"])  # 고지 문구 붙이기 전 원문으로 이력 저장(중복비교용)
