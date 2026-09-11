@@ -74,8 +74,11 @@ def generate(product_image_path: Path, out_path: Path) -> bool:
     }
     try:
         resp = _request_json(CREATE_TASK_URL, headers, method="POST", payload=payload, timeout=60)
+        if not isinstance(resp.get("data"), dict):
+            print(f"[generate_product_video] 작업 생성 실패: code={resp.get('code')} msg={resp.get('msg')}")
+            return False
         task_id = resp["data"]["taskId"]
-    except (urllib.error.URLError, KeyError, json.JSONDecodeError, TimeoutError) as e:
+    except (urllib.error.URLError, KeyError, TypeError, json.JSONDecodeError, TimeoutError) as e:
         print(f"[generate_product_video] 작업 생성 실패: {e}")
         return False
 
@@ -86,7 +89,10 @@ def generate(product_image_path: Path, out_path: Path) -> bool:
         try:
             info = _request_json(f"{RECORD_INFO_URL}?taskId={task_id}", headers, timeout=30)
             data = info["data"]
-        except (urllib.error.URLError, KeyError, json.JSONDecodeError, TimeoutError) as e:
+            if not isinstance(data, dict):
+                print(f"[generate_product_video] 상태조회 실패(재시도 대기): code={info.get('code')} msg={info.get('msg')}")
+                continue
+        except (urllib.error.URLError, KeyError, TypeError, json.JSONDecodeError, TimeoutError) as e:
             print(f"[generate_product_video] 상태조회 실패(재시도 대기): {e}")
             continue
 
