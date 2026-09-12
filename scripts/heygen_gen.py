@@ -87,7 +87,9 @@ def create_video(asset_id: str, script: str, voice_id: str, title: str) -> str:
     return result["data"]["video_id"]
 
 
-def poll_video(video_id: str, max_tries=40, wait_sec=5) -> str:
+def poll_video(video_id: str, max_tries=90, wait_sec=5) -> str:
+    # 2026-09-12: 기존 200초(40*5) 예산으로는 HeyGen이 평소보다 느려질 때 완료 전에
+    # 타임아웃되어(RuntimeError) 파이프라인 전체가 크래시하고 영상이 유실됐음. 450초(90*5)로 상향.
     for _ in range(max_tries):
         result = _get_json(f"https://api.heygen.com/v1/video_status.get?video_id={video_id}")
         status = result.get("data", {}).get("status")
