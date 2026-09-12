@@ -18,17 +18,32 @@ API 필드명 주의(직접 검증함, 2026-09-10 세션): 이미지는 반드�
 """
 import argparse
 import base64
+import io
 import json
-import mimetypes
 import os
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
+from PIL import Image
+
 API_BASE = "https://api.kie.ai/api/v1"
 CREATE_TASK_URL = f"{API_BASE}/jobs/createTask"
 RECORD_INFO_URL = f"{API_BASE}/jobs/recordInfo"
+
+# 2026-09-12: 실 발행 3/3 전패(매번 code=500 Server exception, kie.ai 로그엔
+# Task ID조차 안 남음) 이후 도입. 쿠팡 원본 이미지는 리사이즈/압축 없이 그대로
+# base64 인코딩해 JSON body에 실었는데, 원본이 큰 경우 게이트웨이 단에서
+# 요청 자체가 거부될 가능성을 배제 못 해 안전하게 상한을 둠(사용자 로컬
+# 수동테스트 이미지는 이 크기를 넘지 않았을 수 있음).
+MAX_IMAGE_SIDE = 1280
+JPEG_QUALITY = 88
+
+# 같은 이유로 createTask 1회 실패를 바로 최종 실패로 처리하지 않고 짧게 재시도한다
+# (일시적 5xx일 가능성 배제 못 함).
+CREATE_TASK_MAX_ATTEMPTS = 3
+CREATE_TASK_RETRY_DELAY_S = 5
 
 PROMPT = (
     "the exact same product shown in the reference image slowly rotates on a "
@@ -51,6 +66,41 @@ def _request_json(url, headers, method="GET", payload=None, timeout=30):
         return json.loads(resp.read())
 
 
+def _prepare_image_data_uri(path: Path) -> str:
+    """원본 크기와 무관하게 긴 변 MAX_IMAGE_SIDE 이하로 리사이즈 + JPEG 재압축한다
+    (게이트웨이 단 500 거부의 원인일 수 있는 큰 body를 예방)."""
+    with Image.open(path) as im:
+        im = im.convert("RGB")
+        w, h = im.size
+        scale = min(1.0, MAX_IMAGE_SIDE / max(w, h))
+        if scale < 1.0:
+            im = im.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=JPEG_QUALITY)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    return f"data:image/jpeg;base64,{b64}"
+
+
+def _create_task(headers, payload):
+    """일시적 5xx일 가능성을 배제 못 해 짧게 재시도(같은 요청 그대로)한다."""
+    last_err = "알 수 없는 오류"
+    for attempt in range(1, CREATE_TASK_MAX_ATTEMPTS + 1):
+        try:
+            resp = _request_json(CREATE_TASK_URL, headers, method="POST", payload=payload, timeout=60)
+            if isinstance(resp.get("data"), dict) and "taskId" in resp["data"]:
+                return resp["data"]["taskId"], None
+            last_err = f"code={resp.get('code')} msg={resp.get('msg')}"
+        except (urllib.error.URLError, KeyError, TypeError, json.JSONDecodeError, TimeoutError) as e:
+            last_err = str(e)
+        if attempt < CREATE_TASK_MAX_ATTEMPTS:
+            print(
+                f"[generate_product_video] 작업 생성 실패({attempt}/{CREATE_TASK_MAX_ATTEMPTS}): "
+                f"{last_err}, {CREATE_TASK_RETRY_DELAY_S}초 후 재시도"
+            )
+            time.sleep(CREATE_TASK_RETRY_DELAY_S)
+    return None, last_err
+
+
 def generate(product_image_path: Path, out_path: Path) -> bool:
     key = os.environ.get("KIE_API_KEY")
     if not key:
@@ -58,9 +108,11 @@ def generate(product_image_path: Path, out_path: Path) -> bool:
         return False
 
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-    mime = mimetypes.guess_type(str(product_image_path))[0] or "image/jpeg"
-    b64 = base64.b64encode(product_image_path.read_bytes()).decode()
-    data_uri = f"data:{mime};base64,{b64}"
+    try:
+        data_uri = _prepare_image_data_uri(product_image_path)
+    except Exception as e:  # PIL이 지원 못 하는 포맷 등 예상 못 한 실패도 폴백으로 흡수
+        print(f"[generate_product_video] 이미지 준비 실패: {e}")
+        return False
 
     payload = {
         "model": "bytedance/seedance-2-mini",
@@ -72,14 +124,9 @@ def generate(product_image_path: Path, out_path: Path) -> bool:
             "generate_audio": False,
         },
     }
-    try:
-        resp = _request_json(CREATE_TASK_URL, headers, method="POST", payload=payload, timeout=60)
-        if not isinstance(resp.get("data"), dict):
-            print(f"[generate_product_video] 작업 생성 실패: code={resp.get('code')} msg={resp.get('msg')}")
-            return False
-        task_id = resp["data"]["taskId"]
-    except (urllib.error.URLError, KeyError, TypeError, json.JSONDecodeError, TimeoutError) as e:
-        print(f"[generate_product_video] 작업 생성 실패: {e}")
+    task_id, err = _create_task(headers, payload)
+    if task_id is None:
+        print(f"[generate_product_video] 작업 생성 실패(재시도 {CREATE_TASK_MAX_ATTEMPTS}회 모두 실패): {err}")
         return False
 
     waited = 0
