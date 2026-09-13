@@ -31,6 +31,7 @@ from PIL import Image
 API_BASE = "https://api.kie.ai/api/v1"
 CREATE_TASK_URL = f"{API_BASE}/jobs/createTask"
 RECORD_INFO_URL = f"{API_BASE}/jobs/recordInfo"
+UPLOAD_URL = "https://kieai.redpandaai.co/api/file-base64-upload"
 
 # 2026-09-12: 실 발행 3/3 전패(매번 code=500 Server exception, kie.ai 로그엔
 # Task ID조차 안 남음) 이후 도입. 쿠팡 원본 이미지는 리사이즈/압축 없이 그대로
@@ -81,6 +82,28 @@ def _prepare_image_data_uri(path: Path) -> str:
     return f"data:image/jpeg;base64,{b64}"
 
 
+def _upload_image(headers, data_uri: str, file_name: str) -> str:
+    """2026-09-13: 오늘의 심리학의 runway_motion.py가 쓰는 것과 같은 방식 — 이미지를
+    jobs/createTask 요청 본문에 직접 싣는 대신, 먼저 이 업로드 전용 엔드포인트로
+    올려서 URL만 받아온다. 심리학 채널은 이 방식(업로드 후 URL참조)으로 클라우드
+    루틴(CCR)에서도 매번 성공하는데, 쇼핑의천국은 jobs/createTask에 base64를
+    직접 실어서 클라우드에서만 매번 code=500으로 거부당함
+    ([[project_shopping_paradise_seedance_reliability_2026-09-11]]) — 큰 인라인
+    payload 자체가 게이트웨이에 걸릴 가능성을 시험해보기 위한 변경."""
+    resp = _request_json(
+        UPLOAD_URL, {**headers, "Content-Type": "application/json"}, method="POST",
+        payload={"base64Data": data_uri, "uploadPath": "shopping-paradise-product-video", "fileName": file_name},
+        timeout=60,
+    )
+    if not resp.get("success"):
+        raise RuntimeError(f"kie.ai 이미지 업로드 실패: {resp.get('msg')}")
+    data = resp.get("data") or {}
+    file_url = data.get("fileUrl") or data.get("downloadUrl")
+    if not file_url:
+        raise RuntimeError(f"kie.ai 업로드 응답에 fileUrl/downloadUrl이 없음: {resp}")
+    return file_url
+
+
 def _create_task(headers, payload):
     """일시적 5xx일 가능성을 배제 못 해 짧게 재시도(같은 요청 그대로)한다."""
     last_err = "알 수 없는 오류"
@@ -114,11 +137,17 @@ def generate(product_image_path: Path, out_path: Path) -> bool:
         print(f"[generate_product_video] 이미지 준비 실패: {e}")
         return False
 
+    try:
+        image_url = _upload_image(headers, data_uri, product_image_path.name)
+    except (urllib.error.URLError, RuntimeError, KeyError, TypeError, json.JSONDecodeError, TimeoutError) as e:
+        print(f"[generate_product_video] 이미지 업로드 실패: {e}")
+        return False
+
     payload = {
         "model": "bytedance/seedance-2-mini",
         "input": {
             "prompt": PROMPT,
-            "first_frame_url": data_uri,
+            "first_frame_url": image_url,
             "duration": 4,
             "resolution": "720p",
             "generate_audio": False,
