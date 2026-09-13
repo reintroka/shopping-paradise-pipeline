@@ -90,8 +90,11 @@ def _upload_image(headers, data_uri: str, file_name: str) -> str:
     직접 실어서 클라우드에서만 매번 code=500으로 거부당함
     ([[project_shopping_paradise_seedance_reliability_2026-09-11]]) — 큰 인라인
     payload 자체가 게이트웨이에 걸릴 가능성을 시험해보기 위한 변경."""
+    # urlretrieve/urllib 기본 User-Agent(Python-urllib/x.y)를 kie.ai 업로드 게이트웨이가
+    # 403으로 막는다(다운로드 단계에서 이미 확인한 것과 같은 패턴, 아래 참고) — 브라우저처럼
+    # UA를 붙인다.
     resp = _request_json(
-        UPLOAD_URL, {**headers, "Content-Type": "application/json"}, method="POST",
+        UPLOAD_URL, {**headers, "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}, method="POST",
         payload={"base64Data": data_uri, "uploadPath": "shopping-paradise-product-video", "fileName": file_name},
         timeout=60,
     )
