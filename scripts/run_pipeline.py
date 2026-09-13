@@ -205,11 +205,16 @@ def main():
     # $0.164). 실패해도(크레딧/네트워크/타임아웃 등 무엇이든) product_video_raw.mp4가
     # 안 만들어질 뿐이고, assemble_video.py가 그 파일 존재여부로 자동 판단해 기존
     # 정지이미지+크래시줌 경로로 조용히 폴백하므로 발행 자체는 절대 막히지 않는다.
-    product_video_path = work_dir / "product_video_raw.mp4"
-    soft_step("상품 AI영상 생성", lambda: run_captured([
-        "python3", str(HERE / "generate_product_video.py"),
-        "--image", str(product_image_path), "--out", str(product_video_path),
-    ]))
+    #
+    # 2026-09-13: kie.ai 게이트웨이 측 문제로 확정(재시도+이미지 리사이즈 수정 후에도
+    # 9/12, 9/13 계속 3/3 전패, Task ID조차 안 찍힘 — [[project_shopping_paradise_seedance_reliability_2026-09-11]]
+    # 참고). 매 발행마다 3회 재시도(약 15초)만 낭비하고 항상 폴백으로 가는 상태라
+    # 사용자 요청으로 이 단계 자체를 잠정 비활성화. kie.ai 고객지원 확인 후 재활성화.
+    # product_video_path = work_dir / "product_video_raw.mp4"
+    # soft_step("상품 AI영상 생성", lambda: run_captured([
+    #     "python3", str(HERE / "generate_product_video.py"),
+    #     "--image", str(product_image_path), "--out", str(product_video_path),
+    # ]))
 
     # 5. HeyGen 생성 (비용 발생 지점)
     char_dir = REPO_ROOT / "assets" / "characters" / args.character
