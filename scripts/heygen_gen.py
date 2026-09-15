@@ -9,12 +9,15 @@
 다음에 google_tts.py를 별도로 호출한다.
 """
 import argparse
+import http.client
 import json
 import os
 import random
+import socket
 import time
 from pathlib import Path
 from urllib import request as urlreq
+from urllib.error import HTTPError, URLError
 
 VOICE_IDS = {
     "female": "37311b8fa31d4b0591d7f1ca012e2c59",
@@ -27,6 +30,13 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 CHAR_HISTORY_PATH = REPO_ROOT / "character_image_history.json"
 
+# 2026-09-15: CTA 영상 상태를 poll_video()에서 폴링하던 도중 HeyGen API와의 연결이
+# ConnectionResetError로 끊겨(일시적 네트워크 블립) 예외가 그대로 전파되며 파이프라인
+# 전체가 크래시한 사고 발생 — 상품 선정/대본/그래픽/상품영상까지 이미 만든 작업이
+# 통째로 날아갔었다. 이 스크립트의 HTTP 호출엔 재시도가 전혀 없었던 게 근본 원인이라
+# (HTTPError 4xx/5xx는 재시도해도 소용없으니 그대로 올리고) 일시적 연결 오류만 재시도.
+_TRANSIENT_ERRORS = (URLError, socket.error, http.client.RemoteDisconnected, ConnectionResetError, TimeoutError)
+
 
 def _headers(extra=None):
     h = {"x-api-key": os.environ[API_KEY_ENV]}
@@ -35,17 +45,31 @@ def _headers(extra=None):
     return h
 
 
+def _urlopen_with_retry(build_request, timeout, label, retries=3, wait_sec=5):
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            with urlreq.urlopen(build_request(), timeout=timeout) as resp:
+                return resp.read()
+        except HTTPError:
+            raise
+        except _TRANSIENT_ERRORS as e:
+            last_err = e
+            print(f"[heygen_gen] {label} 네트워크 오류 (시도 {attempt}/{retries}): {e}")
+            if attempt < retries:
+                time.sleep(wait_sec)
+    raise last_err
+
+
 def _post_json(url, body, extra_headers=None):
     data = json.dumps(body).encode("utf-8")
-    req = urlreq.Request(url, data=data, headers=_headers({"Content-Type": "application/json", **(extra_headers or {})}), method="POST")
-    with urlreq.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())
+    req = lambda: urlreq.Request(url, data=data, headers=_headers({"Content-Type": "application/json", **(extra_headers or {})}), method="POST")
+    return json.loads(_urlopen_with_retry(req, 30, f"POST {url}"))
 
 
 def _get_json(url):
-    req = urlreq.Request(url, headers=_headers())
-    with urlreq.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())
+    req = lambda: urlreq.Request(url, headers=_headers())
+    return json.loads(_urlopen_with_retry(req, 30, f"GET {url}"))
 
 
 def upload_image(image_path: Path) -> str:
@@ -57,14 +81,13 @@ def upload_image(image_path: Path) -> str:
         f'Content-Disposition: form-data; name="file"; filename="{image_path.name}"\r\n'
         f"Content-Type: image/jpeg\r\n\r\n"
     ).encode("utf-8") + img_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
-    req = urlreq.Request(
+    req = lambda: urlreq.Request(
         "https://api.heygen.com/v3/assets",
         data=body,
         headers=_headers({"Content-Type": f"multipart/form-data; boundary={boundary}"}),
         method="POST",
     )
-    with urlreq.urlopen(req, timeout=60) as resp:
-        result = json.loads(resp.read())
+    result = json.loads(_urlopen_with_retry(req, 60, "이미지 업로드"))
     return result["data"]["asset_id"]
 
 
@@ -102,9 +125,8 @@ def poll_video(video_id: str, max_tries=90, wait_sec=5) -> str:
 
 
 def download(url: str, out_path: Path):
-    req = urlreq.Request(url)
-    with urlreq.urlopen(req, timeout=60) as resp:
-        out_path.write_bytes(resp.read())
+    req = lambda: urlreq.Request(url)
+    out_path.write_bytes(_urlopen_with_retry(req, 60, f"다운로드 {out_path.name}"))
 
 
 def _load_char_history() -> dict:
