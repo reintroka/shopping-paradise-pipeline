@@ -180,9 +180,11 @@ def main():
         print(f"[경고] 링크 페이지 업데이트 실패 (파이프라인은 계속 진행): {e}")
         soft_step_results.append(("링크 페이지 업데이트", False, str(e)))
 
-    # 3. 상품 이미지 다운로드
+    # 3. 상품 이미지 다운로드 — 쿠팡 CDN이 User-Agent 없는 요청(기본 Python-urllib UA)을
+    # 403으로 차단하는 걸 실제로 겪음(다른 채널들의 Pexels/NASA/aiquickdraw.com CDN도
+    # 동일 문제였음, [[project_shopping_paradise_seedance_reliability_2026-09-11]] 참고).
     product_image_path = work_dir / "product.jpg"
-    req = urllib.request.Request(product["productImage"])
+    req = urllib.request.Request(product["productImage"], headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         product_image_path.write_bytes(resp.read())
 
