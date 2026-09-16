@@ -24,6 +24,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 from PIL import Image
@@ -140,8 +141,18 @@ def generate(product_image_path: Path, out_path: Path) -> bool:
         print(f"[generate_product_video] 이미지 준비 실패: {e}")
         return False
 
+    # 2026-09-16: run_pipeline.py가 로컬 파일을 항상 work_dir/product.jpg로 저장해서
+    # (work_dir는 실행마다 다르지만 .name은 매번 "product.jpg"로 동일) 업로드 파일명도
+    # 매번 똑같았다 — uploadPath+fileName이 고정이라 원격 URL이 고정되고, 그 결과
+    # 모든 실행(남/여 슬롯 등)이 같은 URL을 덮어쓰는 공유 슬롯이 됐다. 폴링 대기가
+    # 최대 180초(그마저 실측상 최대 900초 넘게도 걸림)라 그 사이 다른 실행이 같은
+    # URL에 새 이미지를 덮어쓰면, 먼저 시작한 느린 작업이 kie.ai에서 실제 처리될
+    # 시점엔 완전히 다른 상품 이미지를 참조하게 된다(실제 사고: 청소도구 세트
+    # 요청했는데 영상엔 공기청정기가 나옴). 요청마다 고유한 파일명을 써서 이 공유
+    # 슬롯 자체를 없앤다.
+    unique_file_name = f"{uuid.uuid4().hex}_{product_image_path.name}"
     try:
-        image_url = _upload_image(headers, data_uri, product_image_path.name)
+        image_url = _upload_image(headers, data_uri, unique_file_name)
     except (urllib.error.URLError, RuntimeError, KeyError, TypeError, json.JSONDecodeError, TimeoutError) as e:
         print(f"[generate_product_video] 이미지 업로드 실패: {e}")
         return False
