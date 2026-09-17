@@ -78,12 +78,25 @@ def _page_dots(canvas, index, total=3):
             d.ellipse([x - r, y - r, x + r, y + r], outline=(*GOLD[:3], 180), width=2)
 
 
-def _rounded_panel(w, h, r, fill_alpha=150, border=True):
+def _rounded_panel(w, h, r, fill_alpha=235, border=True):
+    """크림색 라운드 패널(배지/스펙 카드/CTA 버튼에 공용으로 사용).
+
+    2026-09-18 버그 수정: 예전엔 그림자를 패널과 같은 크기로 그린 뒤 (6,10)만큼
+    오프셋해서 붙였는데, 캔버스 크기가 그림자보다 크지 않아 블러 번짐이 캔버스
+    경계에서 그대로 잘렸다 — 그 결과 패널의 둥근 모서리 바깥으로 그림자(어두운
+    색)가 각지게 삐져나온 것처럼 보였다("배경이 삐져나온다" 피드백, No.2 배지/
+    스펙 패널/CTA 버튼 전부 이 함수를 공용으로 써서 셋 다 같은 문제였음).
+    오프셋 없이 패널보다 작게(inset) 그림자를 그려 블러가 퍼져도 항상 패널
+    안쪽에서만 보이게 바꾸고, 채우기도 더 불투명하게 올려 배경이 비쳐 보이는
+    것도 줄였다.
+    """
     canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    inset = 12
     shadow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    ImageDraw.Draw(shadow).rounded_rectangle([0, 0, w - 1, h - 1], radius=r, fill=(30, 22, 12, 90))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(18))
-    canvas.alpha_composite(shadow, (6, 10))
+    ImageDraw.Draw(shadow).rounded_rectangle(
+        [inset, inset, w - 1 - inset, h - 1 - inset], radius=max(4, r - inset), fill=(30, 22, 12, 100))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(10))
+    canvas.alpha_composite(shadow)
     panel = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     ImageDraw.Draw(panel).rounded_rectangle([0, 0, w - 1, h - 1], radius=r, fill=(255, 251, 244, fill_alpha))
     canvas.alpha_composite(panel)
