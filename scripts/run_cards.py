@@ -26,6 +26,7 @@ COUPANG_DISCLOSURE = "이 포스팅은 쿠팡 파트너스 활동의 일환으�
 
 sys.path.insert(0, str(HERE))
 import build_thread_cards  # noqa: E402
+import notify_telegram  # noqa: E402
 
 
 def _find_todays_entry(character: str) -> dict:
@@ -137,19 +138,21 @@ def main():
     except Exception as e:
         print(f"[경고] X 카드뉴스 발행 실패 (계속 진행): {e}")
 
-    # 5. 틱톡 사진 모드 받은편지함(초안) — 영상과 마찬가지로 사람이 앱에서 직접
-    # 게시해야 최종 발행됨. PULL_FROM_URL 방식이 이 앱의 심사 등급에서 실제로
-    # 동작하는지 아직 검증 안 됨(post_tiktok.py 모듈 docstring 참고) — 실패해도
-    # 다른 플랫폼에는 영향 없음.
+    # 5. 틱톡용 — API(post_tiktok.py --mode photo, PULL_FROM_URL)는 시도하지 않고
+    # 처음부터 텔레그램으로 카드 이미지를 바로 전송해 사람이 직접 업로드하게 한다.
+    # 2026-09-18: 같은 계정군의 coredlab(명리마스터) 코드베이스에서 이미 똑같은 걸
+    # API로 시도했다가 "TikTok photo-mode direct API posting is blocked pending
+    # audit/URL verification"으로 확인되어 텔레그램 전송으로 교체한 이력을 발견함
+    # (commit 824e084, 2026-09-02) — 여기서도 API를 붙였다가 매번 실패하고 조용히
+    # 넘어가느니, 처음부터 검증된 방식(텔레그램)을 쓰는 게 낫다고 판단.
     try:
-        tt_out = work_dir / "tiktok_cards_result.json"
-        _run_captured([
-            "python3", str(HERE / "post_tiktok.py"), "--mode", "photo",
-            "--images", card_paths_str, "--caption-hint", caption, "--out", str(tt_out),
-        ])
-        print("[run_cards] 틱톡 카드뉴스 받은편지함 전달 완료")
+        notify_telegram.send_photos(
+            [str(p) for p in card_paths],
+            f"🎵 틱톡용 카드뉴스 (수동 업로드 필요)\n\n{caption}",
+        )
+        print("[run_cards] 틱톡용 카드뉴스 텔레그램 전송 완료 (수동 업로드 필요)")
     except Exception as e:
-        print(f"[경고] 틱톡 카드뉴스 전달 실패 (계속 진행): {e}")
+        print(f"[경고] 틱톡용 텔레그램 전송 실패 (계속 진행): {e}")
 
 
 if __name__ == "__main__":

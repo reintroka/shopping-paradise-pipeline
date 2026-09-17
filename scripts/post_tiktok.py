@@ -15,16 +15,17 @@
 shopping-paradise-pipeline 저장소 자체는 public이라 토큰을 절대 거기 커밋하면 안 됨.
 환경변수는 secrets 저장소에 아직 파일이 없을 때만 쓰이는 최초 시드값이다.
 
-2026-09-18 추가(--mode photo): 카드뉴스(3장)도 틱톡 "사진 모드" 받은편지함으로
-전달한다(사용자 지시 — "쓰레드만 발행하지 말고.. 할수 있는곳에는 다 발행해", 이어서
-"릴스하고 똑같이 넣을수 있어?"). 영상 inbox는 FILE_UPLOAD(직접 바이트 청크 업로드)
-방식만 쓰는데, 이 앱의 심사(audit) 등급이 그 방식만 허용하는 것으로 보여(video
-쪽이 이미 그렇게 구현돼 있음) 사진도 같은 등급 제약을 받을 가능성이 있다 — 다만
-TikTok 공식 문서상 사진 inbox는 PULL_FROM_URL(공개 URL을 틱톡 서버가 직접 가져가는
-방식, 다른 플랫폼 임시 호스팅과 동일한 패턴)이 표준 경로라 이 방식으로 구현했다.
-**주의**: 실제 계정으로 아직 검증 못 함 — 이 앱의 심사 등급이 PULL_FROM_URL을 거부하면
-(사람이 실제로 시도해봐야 확인 가능) 이 스텝만 실패하고 나머지 플랫폼 발행에는 영향
-없다(run_cards.py에서 try/except로 감쌈).
+2026-09-18 추가(--mode photo): 카드뉴스(3장)를 틱톡 "사진 모드" 받은편지함으로
+전달하는 함수(post_photo/init_photo_inbox, PULL_FROM_URL 방식)를 만들었지만,
+**run_cards.py는 이 함수를 쓰지 않는다** — 대신 처음부터 텔레그램으로 카드
+이미지를 보내 사람이 직접 올리게 한다(notify_telegram.send_photos). 이유: 같은
+계정군의 coredlab(명리마스터) 코드베이스에서 정확히 이 방식(포토모드
+PULL_FROM_URL API)을 먼저 시도했다가 "TikTok photo-mode direct API posting is
+blocked pending audit/URL verification"이라는 결론과 함께 텔레그램 전송으로
+교체한 이력을 발견함(coredlab commit 824e084, 2026-09-02) — 이 앱도 같은 심사
+미통과 상태라 동일하게 막혀있을 가능성이 높음. post_photo/init_photo_inbox는
+나중에 앱 심사를 통과해 재검증할 일이 생기면 쓰라고 남겨둔 것이지, 지금 파이프라인
+경로에서 호출되는 코드가 아니다.
 """
 import argparse
 import json
