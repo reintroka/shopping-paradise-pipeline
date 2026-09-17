@@ -44,6 +44,7 @@ REPO_ROOT = HERE.parent
 
 sys.path.insert(0, str(HERE))
 import build_graphics  # noqa: E402
+import build_thread_cards  # noqa: E402
 import heygen_gen  # noqa: E402
 import google_tts  # noqa: E402
 import assemble_video  # noqa: E402
@@ -312,12 +313,44 @@ def main():
     # 지켜본 뒤 켜기로 함(사용자 지시) — 두 환경변수를 등록하지 않는 한 조용히 건너뛰어
     # soft_step_results/텔레그램 알림에 매번 "실패"로 쌓이지 않게 한다. 계정이 안정됐다고
     # 판단되면 클라우드 환경변수만 채우면 코드 변경 없이 바로 켜진다.
+    #
+    # 영상 릴스뿐 아니라 텍스트/카드뉴스(캐러셀)도 같이 발행한다 — 사용자가 직접
+    # 운영해보니 쓰레드는 영상보다 글/카드섹션 쪽 조회수가 더 잘 나온다는 피드백
+    # 반영(2026-09-18). 셋 다 같은 날 이미 선정된 이 상품 데이터를 재사용할 뿐,
+    # 별도 상품 선정 로직은 없다.
     if os.environ.get("THREADS_USER_ID") and os.environ.get("THREADS_ACCESS_TOKEN"):
-        threads_out_path = work_dir / "threads_result.json"
-        soft_step("쓰레드", lambda: run_captured([
-            "python3", str(HERE / "post_threads.py"),
-            "--video", str(final_video), "--caption", ig_caption, "--out", str(threads_out_path),
+        threads_video_out = work_dir / "threads_video_result.json"
+        soft_step("쓰레드 영상", lambda: run_captured([
+            "python3", str(HERE / "post_threads.py"), "--mode", "video",
+            "--video", str(final_video), "--caption", ig_caption, "--out", str(threads_video_out),
         ]))
+
+        threads_text_out = work_dir / "threads_text_result.json"
+        soft_step("쓰레드 텍스트", lambda: run_captured([
+            "python3", str(HERE / "post_threads.py"), "--mode", "text",
+            "--caption", ig_caption, "--out", str(threads_text_out),
+        ]))
+
+        def _post_threads_carousel():
+            card_paths = build_thread_cards.build_all(
+                work_dir,
+                product["productName"][:20],
+                f"{product['productPrice']:,}원대",
+                product_image_path,
+                (script_data["spec1_title"], script_data["spec1_body"]),
+                (script_data["spec2_title"], script_data["spec2_body"]),
+                (script_data["spec3_title"], script_data["spec3_body"]),
+                script_data["hook_speech"],
+                script_data["cta_speech"],
+                rank=product_rank,
+            )
+            threads_carousel_out = work_dir / "threads_carousel_result.json"
+            run_captured([
+                "python3", str(HERE / "post_threads.py"), "--mode", "carousel",
+                "--images", ",".join(str(p) for p in card_paths),
+                "--caption", ig_caption, "--out", str(threads_carousel_out),
+            ])
+        soft_step("쓰레드 카드뉴스", _post_threads_carousel)
     else:
         print("[run_pipeline] 쓰레드 발행 건너뜀 (THREADS_USER_ID/THREADS_ACCESS_TOKEN 미설정 — 비활성화 상태)")
 

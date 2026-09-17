@@ -1,4 +1,4 @@
-"""shoppingparadise.kr 쓰레드(Threads)에 영상을 발행 (Threads API).
+"""shoppingparadise.kr 쓰레드(Threads)에 발행 (Threads API) — 영상/텍스트/카드뉴스(캐러셀).
 
 환경변수: THREADS_USER_ID, THREADS_ACCESS_TOKEN
   - THREADS_USER_ID: shoppingparadise.kr의 Threads 사용자 ID (graph.threads.net/me로 확인)
@@ -12,14 +12,18 @@
 신규 계정이 바로 대량 자동 게시하면 계정 삭제 위험이 있다는 우려). THREADS_USER_ID/
 THREADS_ACCESS_TOKEN 클라우드 환경변수를 등록하지 않는 한 이 스크립트는 절대
 호출되지 않는다 — run_pipeline.py가 실행 전에 두 환경변수 존재를 먼저 확인하고,
-없으면 "비활성화"로 조용히 건너뛴다(실패로 취급 안 함, 텔레그램에 매번 실패 알림이
-쌓이지 않게). 계정이 안정됐다고 판단되면 클라우드 환경변수만 채우면 코드 변경 없이
-바로 켜진다.
+없으면 "비활성화"로 조용히 건너뛴다.
 
-발행 방식: 인스타그램 릴스와 동일하게 컨테이너 생성(media_type=VIDEO) → 처리 완료
-폴링 → 발행(creation_id) 2단계. 영상은 로컬에만 있으므로 post_instagram.py와 동일한
-GitHub Pages 임시 호스팅(shopping-paradise-media)을 거쳐 공개 URL을 넘긴다. 파일명
-접두사는 "th-"로 달리해 같은 실행 사이클의 인스타/페이스북 업로드와 충돌하지 않게 한다.
+**2026-09-18 추가: 사용자가 직접 운영해보니 쓰레드는 영상보다 글/카드뉴스 포스팅의
+조회수가 더 잘 나온다는 피드백 — --mode로 video/text/carousel 세 가지를 지원한다
+(같은 실행에서 릴스 영상과 별개로 텍스트+카드뉴스도 추가 발행).
+
+발행 방식: 인스타그램 릴스와 동일하게 컨테이너 생성 → (영상/이미지는) 처리 완료
+폴링 → 발행(creation_id) 순서. 로컬 파일은 post_instagram.py와 동일한 GitHub Pages
+임시 호스팅(shopping-paradise-media)을 거쳐 공개 URL을 넘긴다. 캐러셀은 이미지
+여러 장의 URL이 쓰레드 서버가 각각을 가져갈 때까지 동시에 살아있어야 하므로, 개별
+force push(파일 1개씩 덮어쓰기) 대신 이번 실행의 파일들을 한 커밋에 모아 한 번에
+force push한다 — 그래야 카드1 URL이 카드2 push로 지워지는 일이 없다.
 """
 import argparse
 import json
@@ -76,28 +80,29 @@ def _post(url: str, params: dict) -> dict:
         raise _http_error_with_body(e) from None
 
 
-def publish_to_temp_host(video_path: Path) -> str:
-    """영상을 shopping-paradise-media 저장소에 force push하고 GitHub Pages URL을 반환.
+def publish_to_temp_host(files: dict) -> dict:
+    """{파일명: 로컬경로} 여러 개를 한 커밋으로 묶어 shopping-paradise-media 저장소에
+    force push하고 {파일명: GitHub Pages URL}을 반환한다.
 
-    post_instagram.py의 동명 함수와 동일한 이유(캐시 충돌 방지를 위한 타임스탬프
-    파일명)로 동작하되, 파일명 접두사를 "th-"로 달리해 같은 실행 사이클 안에서
-    인스타그램/페이스북 업로드와 겹치지 않게 한다.
+    한 번에(한 커밋으로) 밀어야 캐러셀처럼 여러 URL이 동시에 살아있어야 하는 경우에도
+    먼저 올린 파일의 URL이 다음 파일 push로 지워지지 않는다. 파일명은 호출부에서
+    타임스탬프 기반 고유값으로 만들어 캐시 충돌을 방지한다(post_instagram.py와 동일 이유).
     """
-    media_filename = f"th-{int(time.time())}.mp4"
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
-        (tmp_path / media_filename).write_bytes(video_path.read_bytes())
+        for filename, local_path in files.items():
+            (tmp_path / filename).write_bytes(Path(local_path).read_bytes())
         (tmp_path / ".nojekyll").touch()
         subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
         subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin", MEDIA_REPO_URL], check=True)
         subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
         subprocess.run(
             ["git", "-C", str(tmp_path), "-c", "user.email=bot@shopping-paradise.local",
-             "-c", "user.name=shopping-paradise-bot", "commit", "-q", "-m", f"temp host {media_filename}"],
+             "-c", "user.name=shopping-paradise-bot", "commit", "-q", "-m", f"temp host {len(files)} file(s)"],
             check=True,
         )
         subprocess.run(["git", "-C", str(tmp_path), "push", "--force", "origin", "HEAD:main"], check=True)
-    return f"{MEDIA_PAGES_BASE}/{media_filename}"
+    return {filename: f"{MEDIA_PAGES_BASE}/{filename}" for filename in files}
 
 
 def wait_until_reachable(url: str, timeout_secs: int = 180) -> None:
@@ -112,7 +117,7 @@ def wait_until_reachable(url: str, timeout_secs: int = 180) -> None:
         except Exception as e:
             last_err = e
         time.sleep(5)
-    raise RuntimeError(f"GitHub Pages 영상 URL이 {timeout_secs}초 내에 응답하지 않음: {last_err}")
+    raise RuntimeError(f"GitHub Pages URL이 {timeout_secs}초 내에 응답하지 않음: {url} ({last_err})")
 
 
 def refresh_long_lived_token(access_token: str) -> dict:
@@ -163,12 +168,43 @@ def create_video_container(threads_user_id: str, access_token: str, video_url: s
         {"media_type": "VIDEO", "video_url": video_url, "text": text, "access_token": access_token},
     )
     if "id" not in result:
-        raise RuntimeError(f"컨테이너 생성 실패: {result}")
+        raise RuntimeError(f"영상 컨테이너 생성 실패: {result}")
+    return result["id"]
+
+
+def create_text_container(threads_user_id: str, access_token: str, text: str) -> str:
+    result = _post(
+        f"{GRAPH_BASE}/{threads_user_id}/threads",
+        {"media_type": "TEXT", "text": text, "access_token": access_token},
+    )
+    if "id" not in result:
+        raise RuntimeError(f"텍스트 컨테이너 생성 실패: {result}")
+    return result["id"]
+
+
+def create_carousel_item_container(threads_user_id: str, access_token: str, image_url: str) -> str:
+    result = _post(
+        f"{GRAPH_BASE}/{threads_user_id}/threads",
+        {"media_type": "IMAGE", "image_url": image_url, "is_carousel_item": "true", "access_token": access_token},
+    )
+    if "id" not in result:
+        raise RuntimeError(f"캐러셀 아이템 컨테이너 생성 실패: {result}")
+    return result["id"]
+
+
+def create_carousel_container(threads_user_id: str, access_token: str, children_ids: list, text: str) -> str:
+    result = _post(
+        f"{GRAPH_BASE}/{threads_user_id}/threads",
+        {"media_type": "CAROUSEL", "children": ",".join(children_ids), "text": text, "access_token": access_token},
+    )
+    if "id" not in result:
+        raise RuntimeError(f"캐러셀 컨테이너 생성 실패: {result}")
     return result["id"]
 
 
 def wait_for_container_ready(container_id: str, access_token: str, timeout_secs: int = 300) -> None:
-    """쓰레드가 video_url에서 영상을 내려받아 처리(FINISHED)할 때까지 폴링."""
+    """쓰레드가 media_url에서 미디어를 내려받아 처리(FINISHED)할 때까지 폴링.
+    텍스트 전용 컨테이너도 같은 흐름을 타지만 처리할 미디어가 없어 즉시 FINISHED가 된다."""
     deadline = time.time() + timeout_secs
     while time.time() < deadline:
         result = _get(f"{GRAPH_BASE}/{container_id}", {"fields": "status", "access_token": access_token})
@@ -176,9 +212,9 @@ def wait_for_container_ready(container_id: str, access_token: str, timeout_secs:
         if status == "FINISHED":
             return
         if status in ("ERROR", "EXPIRED"):
-            raise RuntimeError(f"쓰레드 영상 처리 실패: {result}")
+            raise RuntimeError(f"쓰레드 컨테이너 처리 실패: {result}")
         time.sleep(10)
-    raise RuntimeError(f"쓰레드 영상 처리 시간 초과({timeout_secs}초)")
+    raise RuntimeError(f"쓰레드 컨테이너 처리 시간 초과({timeout_secs}초): {container_id}")
 
 
 def publish_container(threads_user_id: str, access_token: str, container_id: str) -> dict:
@@ -193,26 +229,7 @@ def get_permalink(media_id: str, access_token: str) -> str:
     return result.get("permalink", "")
 
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--video", required=True)
-    p.add_argument("--caption", required=True)
-    p.add_argument("--out", required=True)
-    args = p.parse_args()
-
-    threads_user_id = os.environ["THREADS_USER_ID"]
-    access_token = get_valid_access_token()
-
-    video_url = publish_to_temp_host(Path(args.video))
-    print(f"[post_threads] 임시 호스팅 완료: {video_url}")
-    wait_until_reachable(video_url)
-    print("[post_threads] GitHub Pages 배포 확인됨")
-
-    container_id = create_video_container(threads_user_id, access_token, video_url, args.caption)
-    print(f"[post_threads] 컨테이너 생성: {container_id}")
-    wait_for_container_ready(container_id, access_token)
-    print("[post_threads] 영상 처리 완료(FINISHED)")
-
+def _finish_and_write(threads_user_id, access_token, container_id, out_path, tag):
     publish_result = publish_container(threads_user_id, access_token, container_id)
     media_id = publish_result.get("id")
     if not media_id:
@@ -220,8 +237,81 @@ def main():
 
     permalink = get_permalink(media_id, access_token)
     result = {"media_id": media_id, "permalink": permalink}
-    Path(args.out).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[post_threads] 발행 완료: {permalink or media_id}")
+    Path(out_path).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[post_threads:{tag}] 발행 완료: {permalink or media_id}")
+
+
+def post_video(threads_user_id, access_token, video_path, caption, out_path):
+    ts = int(time.time())
+    filename = f"th-{ts}.mp4"
+    urls = publish_to_temp_host({filename: video_path})
+    video_url = urls[filename]
+    print(f"[post_threads:video] 임시 호스팅 완료: {video_url}")
+    wait_until_reachable(video_url)
+    print("[post_threads:video] GitHub Pages 배포 확인됨")
+
+    container_id = create_video_container(threads_user_id, access_token, video_url, caption)
+    print(f"[post_threads:video] 컨테이너 생성: {container_id}")
+    wait_for_container_ready(container_id, access_token)
+    print("[post_threads:video] 영상 처리 완료(FINISHED)")
+
+    _finish_and_write(threads_user_id, access_token, container_id, out_path, "video")
+
+
+def post_text(threads_user_id, access_token, caption, out_path):
+    container_id = create_text_container(threads_user_id, access_token, caption)
+    print(f"[post_threads:text] 컨테이너 생성: {container_id}")
+    wait_for_container_ready(container_id, access_token)
+    _finish_and_write(threads_user_id, access_token, container_id, out_path, "text")
+
+
+def post_carousel(threads_user_id, access_token, image_paths, caption, out_path):
+    ts = int(time.time())
+    filenames = [f"th-card{i}-{ts}.png" for i in range(1, len(image_paths) + 1)]
+    urls = publish_to_temp_host(dict(zip(filenames, image_paths)))
+    image_urls = [urls[f] for f in filenames]
+    print(f"[post_threads:carousel] 임시 호스팅 완료: {image_urls}")
+    for url in image_urls:
+        wait_until_reachable(url)
+    print("[post_threads:carousel] GitHub Pages 배포 확인됨")
+
+    item_ids = []
+    for url in image_urls:
+        item_id = create_carousel_item_container(threads_user_id, access_token, url)
+        wait_for_container_ready(item_id, access_token)
+        item_ids.append(item_id)
+    print(f"[post_threads:carousel] 아이템 컨테이너 {len(item_ids)}개 처리 완료")
+
+    container_id = create_carousel_container(threads_user_id, access_token, item_ids, caption)
+    print(f"[post_threads:carousel] 캐러셀 컨테이너 생성: {container_id}")
+    wait_for_container_ready(container_id, access_token)
+
+    _finish_and_write(threads_user_id, access_token, container_id, out_path, "carousel")
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--mode", choices=["video", "text", "carousel"], default="video")
+    p.add_argument("--video")
+    p.add_argument("--images", help="캐러셀 이미지 경로를 콤마로 구분해서 전달 (2~10장)")
+    p.add_argument("--caption", required=True)
+    p.add_argument("--out", required=True)
+    args = p.parse_args()
+
+    threads_user_id = os.environ["THREADS_USER_ID"]
+    access_token = get_valid_access_token()
+
+    if args.mode == "video":
+        if not args.video:
+            raise SystemExit("--mode video 에는 --video가 필요합니다")
+        post_video(threads_user_id, access_token, Path(args.video), args.caption, args.out)
+    elif args.mode == "text":
+        post_text(threads_user_id, access_token, args.caption, args.out)
+    elif args.mode == "carousel":
+        if not args.images:
+            raise SystemExit("--mode carousel 에는 --images가 필요합니다")
+        image_paths = [Path(s.strip()) for s in args.images.split(",") if s.strip()]
+        post_carousel(threads_user_id, access_token, image_paths, args.caption, args.out)
 
 
 if __name__ == "__main__":
