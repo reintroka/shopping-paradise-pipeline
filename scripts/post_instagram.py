@@ -84,6 +84,31 @@ def _post(url: str, params: dict) -> dict:
         raise _http_error_with_body(e) from None
 
 
+def publish_images_to_temp_host(image_paths: list) -> list:
+    """카드뉴스 이미지 여러 장을 한 커밋에 모아 한 번에 force push하고 URL 리스트를
+    반환한다(post_threads.py의 동명 함수와 동일한 이유 — 개별 force push하면 앞
+    이미지의 URL이 다음 이미지 push로 지워짐). 2026-09-18, 쓰레드뿐 아니라
+    인스타그램/페이스북에도 카드뉴스를 발행하기로 함(사용자 지시: "쓰레드만
+    발행하지 말고.. 할수 있는곳에는 다 발행해")."""
+    ts = int(time.time())
+    filenames = [f"ig-card{i}-{ts}.png" for i in range(1, len(image_paths) + 1)]
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        for filename, local_path in zip(filenames, image_paths):
+            (tmp_path / filename).write_bytes(Path(local_path).read_bytes())
+        (tmp_path / ".nojekyll").touch()
+        subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin", MEDIA_REPO_URL], check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "-c", "user.email=bot@shopping-paradise.local",
+             "-c", "user.name=shopping-paradise-bot", "commit", "-q", "-m", f"temp host {len(filenames)} file(s)"],
+            check=True,
+        )
+        subprocess.run(["git", "-C", str(tmp_path), "push", "--force", "origin", "HEAD:main"], check=True)
+    return [f"{MEDIA_PAGES_BASE}/{f}" for f in filenames]
+
+
 def publish_to_temp_host(video_path: Path) -> str:
     """영상을 shopping-paradise-media 저장소에 force push하고 GitHub Pages URL을 반환.
 
@@ -208,25 +233,36 @@ def get_permalink(media_id: str, access_token: str) -> str:
     return result.get("permalink", "")
 
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--video", required=True)
-    p.add_argument("--caption", required=True)
-    p.add_argument("--out", required=True)
-    args = p.parse_args()
+def create_carousel_item_container(ig_user_id: str, access_token: str, image_url: str) -> str:
+    result = _post(
+        f"{GRAPH_BASE}/{ig_user_id}/media",
+        {"image_url": image_url, "is_carousel_item": "true", "access_token": access_token},
+    )
+    if "id" not in result:
+        raise RuntimeError(f"캐러셀 아이템 컨테이너 생성 실패: {result}")
+    return result["id"]
 
-    ig_user_id = os.environ["IG_USER_ID"]
-    access_token = get_valid_access_token()
 
-    video_url = publish_to_temp_host(Path(args.video))
-    print(f"[post_instagram] 임시 호스팅 완료: {video_url}")
+def create_carousel_container(ig_user_id: str, access_token: str, children_ids: list, caption: str) -> str:
+    result = _post(
+        f"{GRAPH_BASE}/{ig_user_id}/media",
+        {"media_type": "CAROUSEL", "children": ",".join(children_ids), "caption": caption, "access_token": access_token},
+    )
+    if "id" not in result:
+        raise RuntimeError(f"캐러셀 컨테이너 생성 실패: {result}")
+    return result["id"]
+
+
+def post_video(ig_user_id, access_token, video_path, caption, out_path):
+    video_url = publish_to_temp_host(Path(video_path))
+    print(f"[post_instagram:video] 임시 호스팅 완료: {video_url}")
     wait_until_reachable(video_url)
-    print("[post_instagram] GitHub Pages 배포 확인됨")
+    print("[post_instagram:video] GitHub Pages 배포 확인됨")
 
-    container_id = create_reels_container(ig_user_id, access_token, video_url, args.caption)
-    print(f"[post_instagram] 컨테이너 생성: {container_id}")
+    container_id = create_reels_container(ig_user_id, access_token, video_url, caption)
+    print(f"[post_instagram:video] 컨테이너 생성: {container_id}")
     wait_for_container_ready(container_id, access_token)
-    print("[post_instagram] 영상 처리 완료(FINISHED)")
+    print("[post_instagram:video] 영상 처리 완료(FINISHED)")
 
     publish_result = publish_container(ig_user_id, access_token, container_id)
     media_id = publish_result.get("id")
@@ -235,8 +271,64 @@ def main():
 
     permalink = get_permalink(media_id, access_token)
     result = {"media_id": media_id, "permalink": permalink}
-    Path(args.out).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[post_instagram] 발행 완료: {permalink or media_id}")
+    Path(out_path).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[post_instagram:video] 발행 완료: {permalink or media_id}")
+
+
+def post_carousel(ig_user_id, access_token, image_paths, caption, out_path):
+    # 2026-09-18: 쓰레드뿐 아니라 인스타그램에도 카드뉴스(캐러셀)를 발행하기로 함
+    # (사용자 지시: "쓰레드만 발행하지 말고.. 할수 있는곳에는 다 발행해"). 로직은
+    # post_threads.py의 캐러셀 플로우와 동일 — 이미지 여러 장을 한 커밋에 모아
+    # 호스팅→아이템 컨테이너 생성/대기→부모 컨테이너 생성/대기→발행.
+    image_urls = publish_images_to_temp_host([Path(p) for p in image_paths])
+    print(f"[post_instagram:carousel] 임시 호스팅 완료: {image_urls}")
+    for url in image_urls:
+        wait_until_reachable(url)
+    print("[post_instagram:carousel] GitHub Pages 배포 확인됨")
+
+    item_ids = []
+    for url in image_urls:
+        item_id = create_carousel_item_container(ig_user_id, access_token, url)
+        wait_for_container_ready(item_id, access_token)
+        item_ids.append(item_id)
+    print(f"[post_instagram:carousel] 아이템 컨테이너 {len(item_ids)}개 처리 완료")
+
+    container_id = create_carousel_container(ig_user_id, access_token, item_ids, caption)
+    print(f"[post_instagram:carousel] 캐러셀 컨테이너 생성: {container_id}")
+    wait_for_container_ready(container_id, access_token)
+
+    publish_result = publish_container(ig_user_id, access_token, container_id)
+    media_id = publish_result.get("id")
+    if not media_id:
+        raise RuntimeError(f"발행 실패: {publish_result}")
+
+    permalink = get_permalink(media_id, access_token)
+    result = {"media_id": media_id, "permalink": permalink}
+    Path(out_path).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[post_instagram:carousel] 발행 완료: {permalink or media_id}")
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--mode", choices=["video", "carousel"], default="video")
+    p.add_argument("--video")
+    p.add_argument("--images", help="캐러셀 이미지 경로를 콤마로 구분해서 전달 (2~10장)")
+    p.add_argument("--caption", required=True)
+    p.add_argument("--out", required=True)
+    args = p.parse_args()
+
+    ig_user_id = os.environ["IG_USER_ID"]
+    access_token = get_valid_access_token()
+
+    if args.mode == "video":
+        if not args.video:
+            raise SystemExit("--mode video 에는 --video가 필요합니다")
+        post_video(ig_user_id, access_token, args.video, args.caption, args.out)
+    elif args.mode == "carousel":
+        if not args.images:
+            raise SystemExit("--mode carousel 에는 --images가 필요합니다")
+        image_paths = [s.strip() for s in args.images.split(",") if s.strip()]
+        post_carousel(ig_user_id, access_token, image_paths, args.caption, args.out)
 
 
 if __name__ == "__main__":

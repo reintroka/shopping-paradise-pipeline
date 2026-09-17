@@ -181,9 +181,100 @@ def publish_video(page_id: str, page_access_token: str, video_url: str, descript
     })
 
 
+def publish_images_to_temp_host(image_paths: list) -> list:
+    """카드뉴스 이미지 여러 장을 한 커밋에 모아 한 번에 force push(post_instagram.py/
+    post_threads.py의 동명 함수와 동일한 이유 — 개별 force push하면 앞 이미지의 URL이
+    지워짐). 2026-09-18, 사용자 지시("쓰레드만 발행하지 말고.. 할수 있는곳에는 다
+    발행해")로 페이스북에도 텍스트/카드뉴스를 발행하기로 함."""
+    ts = int(time.time())
+    filenames = [f"fb-card{i}-{ts}.png" for i in range(1, len(image_paths) + 1)]
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        for filename, local_path in zip(filenames, image_paths):
+            (tmp_path / filename).write_bytes(Path(local_path).read_bytes())
+        (tmp_path / ".nojekyll").touch()
+        subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin", MEDIA_REPO_URL], check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "-c", "user.email=bot@shopping-paradise.local",
+             "-c", "user.name=shopping-paradise-bot", "commit", "-q", "-m", f"temp host {len(filenames)} file(s)"],
+            check=True,
+        )
+        subprocess.run(["git", "-C", str(tmp_path), "push", "--force", "origin", "HEAD:main"], check=True)
+    return [f"{MEDIA_PAGES_BASE}/{f}" for f in filenames]
+
+
+def publish_text_post(page_id: str, page_access_token: str, message: str) -> dict:
+    return _post(f"{GRAPH_BASE}/{page_id}/feed", {"message": message, "access_token": page_access_token})
+
+
+def upload_unpublished_photo(page_id: str, page_access_token: str, image_url: str) -> str:
+    result = _post(f"{GRAPH_BASE}/{page_id}/photos", {
+        "url": image_url, "published": "false", "access_token": page_access_token,
+    })
+    if "id" not in result:
+        raise RuntimeError(f"사진 업로드 실패: {result}")
+    return result["id"]
+
+
+def publish_carousel_post(page_id: str, page_access_token: str, photo_ids: list, message: str) -> dict:
+    attached_media = json.dumps([{"media_fbid": pid} for pid in photo_ids])
+    return _post(f"{GRAPH_BASE}/{page_id}/feed", {
+        "message": message, "attached_media": attached_media, "access_token": page_access_token,
+    })
+
+
+def post_video(page, video_path, caption, out_path):
+    video_url = publish_to_temp_host(Path(video_path))
+    print(f"[post_facebook:video] 임시 호스팅 완료: {video_url}")
+    wait_until_reachable(video_url)
+    print("[post_facebook:video] GitHub Pages 배포 확인됨")
+
+    result = publish_video(page["id"], page["access_token"], video_url, caption)
+    video_id = result.get("id")
+    if not video_id:
+        raise RuntimeError(f"발행 실패: {result}")
+
+    out = {"video_id": video_id, "page_name": page["name"]}
+    Path(out_path).write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[post_facebook:video] 발행 완료: video_id={video_id}")
+
+
+def post_text(page, message, out_path):
+    result = publish_text_post(page["id"], page["access_token"], message)
+    post_id = result.get("id")
+    if not post_id:
+        raise RuntimeError(f"발행 실패: {result}")
+    out = {"post_id": post_id, "page_name": page["name"]}
+    Path(out_path).write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[post_facebook:text] 발행 완료: post_id={post_id}")
+
+
+def post_carousel(page, image_paths, message, out_path):
+    image_urls = publish_images_to_temp_host([Path(p) for p in image_paths])
+    print(f"[post_facebook:carousel] 임시 호스팅 완료: {image_urls}")
+    for url in image_urls:
+        wait_until_reachable(url)
+    print("[post_facebook:carousel] GitHub Pages 배포 확인됨")
+
+    photo_ids = [upload_unpublished_photo(page["id"], page["access_token"], url) for url in image_urls]
+    print(f"[post_facebook:carousel] 사진 {len(photo_ids)}장 업로드 완료(비공개)")
+
+    result = publish_carousel_post(page["id"], page["access_token"], photo_ids, message)
+    post_id = result.get("id")
+    if not post_id:
+        raise RuntimeError(f"발행 실패: {result}")
+    out = {"post_id": post_id, "page_name": page["name"]}
+    Path(out_path).write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[post_facebook:carousel] 발행 완료: post_id={post_id}")
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--video", required=True)
+    p.add_argument("--mode", choices=["video", "text", "carousel"], default="video")
+    p.add_argument("--video")
+    p.add_argument("--images", help="캐러셀 이미지 경로를 콤마로 구분해서 전달 (2~10장)")
     p.add_argument("--caption", required=True)
     p.add_argument("--out", required=True)
     args = p.parse_args()
@@ -193,19 +284,17 @@ def main():
     page = get_page_credentials(user_access_token, page_id)
     print(f"[post_facebook] 타겟 페이지 확인: {page['name']} (ID: {page['id']})")
 
-    video_url = publish_to_temp_host(Path(args.video))
-    print(f"[post_facebook] 임시 호스팅 완료: {video_url}")
-    wait_until_reachable(video_url)
-    print("[post_facebook] GitHub Pages 배포 확인됨")
-
-    result = publish_video(page["id"], page["access_token"], video_url, args.caption)
-    video_id = result.get("id")
-    if not video_id:
-        raise RuntimeError(f"발행 실패: {result}")
-
-    out = {"video_id": video_id, "page_name": page["name"]}
-    Path(args.out).write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[post_facebook] 발행 완료: video_id={video_id}")
+    if args.mode == "video":
+        if not args.video:
+            raise SystemExit("--mode video 에는 --video가 필요합니다")
+        post_video(page, args.video, args.caption, args.out)
+    elif args.mode == "text":
+        post_text(page, args.caption, args.out)
+    elif args.mode == "carousel":
+        if not args.images:
+            raise SystemExit("--mode carousel 에는 --images가 필요합니다")
+        image_paths = [s.strip() for s in args.images.split(",") if s.strip()]
+        post_carousel(page, image_paths, args.caption, args.out)
 
 
 if __name__ == "__main__":

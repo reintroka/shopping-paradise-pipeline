@@ -131,14 +131,21 @@ def main():
     push_with_retry(REPO_ROOT)
     print(f"[run_teaser] 상품 예약 완료: {product['productName'][:20]} (2시간 뒤 run_pipeline.py가 이어받음)")
 
-    # 6. 쓰레드 텍스트 티저 발행 (부가) — THREADS_USER_ID/THREADS_ACCESS_TOKEN 미설정
-    # 시 조용히 건너뜀(run_pipeline.py의 8.56번과 동일한 게이트).
+    # 6. 텍스트 티저 발행 (부가) — hook_speech만 써서 상품명/가격은 공개하지 않고
+    # 궁금증만 유발한다(스포일러 방지). 2026-09-18: 쓰레드뿐 아니라 텍스트 포스팅이
+    # 가능한 다른 채널(페이스북, X)에도 같은 티저를 올리기로 함(사용자 지시:
+    # "쓰레드만 발행하지 말고.. 할수 있는곳에는 다 발행해"). 인스타그램은 텍스트
+    # 단독 포스팅 자체가 없는 플랫폼이라 대상에서 제외.
+    teaser_text = (
+        f"⏰ {args.reveal_time}에 공개돼요\n\n"
+        f"{script_data['hook_speech']}\n\n"
+        f"오늘 쇼핑의천국이 고른 아이템, 조금 이따 여기서 공개할게요 👀"
+    )
+
+    # 6a. 쓰레드 텍스트 티저 — THREADS_USER_ID/THREADS_ACCESS_TOKEN 미설정 시 조용히
+    # 건너뜀(run_pipeline.py의 8.56번과 동일한 게이트, 계정을 며칠 지켜보는 중이라
+    # 아직 비활성).
     if os.environ.get("THREADS_USER_ID") and os.environ.get("THREADS_ACCESS_TOKEN"):
-        teaser_text = (
-            f"⏰ {args.reveal_time}에 공개돼요\n\n"
-            f"{script_data['hook_speech']}\n\n"
-            f"오늘 쇼핑의천국이 고른 아이템, 조금 이따 여기서 공개할게요 👀"
-        )
         teaser_out = work_dir / "threads_teaser_result.json"
         try:
             run_captured([
@@ -150,6 +157,26 @@ def main():
             print(f"[경고] 쓰레드 텍스트 티저 발행 실패 (계속 진행, 상품 예약은 이미 완료됨): {e}")
     else:
         print("[run_teaser] 쓰레드 텍스트 티저 건너뜀 (THREADS_USER_ID/THREADS_ACCESS_TOKEN 미설정 — 비활성화 상태)")
+
+    # 6b. 페이스북 페이지 텍스트 티저 — FACEBOOK_ACCESS_TOKEN은 이미 활성화돼 있으므로
+    # (run_pipeline.py가 매일 영상을 발행 중) 게이트 없이 바로 시도한다.
+    fb_teaser_out = work_dir / "facebook_teaser_result.json"
+    try:
+        run_captured([
+            "python3", str(HERE / "post_facebook.py"), "--mode", "text",
+            "--caption", teaser_text, "--out", str(fb_teaser_out),
+        ])
+        print("[run_teaser] 페이스북 텍스트 티저 발행 완료")
+    except Exception as e:
+        print(f"[경고] 페이스북 텍스트 티저 발행 실패 (계속 진행): {e}")
+
+    # 6c. X 텍스트 티저 — post_x.py는 --image가 원래 선택 인자라 텍스트 단독
+    # 트윗을 그대로 지원한다(코드 변경 불필요).
+    try:
+        run_captured(["python3", str(HERE / "post_x.py"), "--text", teaser_text])
+        print("[run_teaser] X 텍스트 티저 발행 완료")
+    except Exception as e:
+        print(f"[경고] X 텍스트 티저 발행 실패 (계속 진행): {e}")
 
 
 if __name__ == "__main__":

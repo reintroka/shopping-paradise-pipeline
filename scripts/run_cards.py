@@ -45,16 +45,23 @@ def _find_todays_entry(character: str) -> dict:
     return entry
 
 
+def _run_captured(cmd):
+    print("+", " ".join(cmd))
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    output = (result.stdout or "") + (result.stderr or "")
+    if output:
+        print(output, end="" if output.endswith("\n") else "\n")
+    if result.returncode != 0:
+        raise RuntimeError(f"exit {result.returncode}: {output[-1500:].strip()}")
+    return result
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--character", choices=["female", "male"], required=True)
     args = p.parse_args()
 
     entry = _find_todays_entry(args.character)
-
-    if not (os.environ.get("THREADS_USER_ID") and os.environ.get("THREADS_ACCESS_TOKEN")):
-        print("[run_cards] 건너뜀 (THREADS_USER_ID/THREADS_ACCESS_TOKEN 미설정 — 비활성화 상태)")
-        return
 
     work_dir = REPO_ROOT / "work" / args.character
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -65,6 +72,9 @@ def main():
 
     specs = entry["specs"]
     product_name = entry.get("product_name_full") or entry["product_name"]
+    # 2026-09-18: 카드뉴스는 쓰레드 전용이 아니라 인스타그램/페이스북/X에도 같이
+    # 발행한다(사용자 지시: "쓰레드만 발행하지 말고.. 할수 있는곳에는 다 발행해") —
+    # 카드 이미지 자체는 한 번만 만들어서 4개 플랫폼이 재사용한다.
     card_paths = build_thread_cards.build_all(
         work_dir,
         product_name, f"{entry['price']:,}원대", img_path,
@@ -74,21 +84,57 @@ def main():
         entry["hook_speech"], entry["cta_speech"],
         rank=entry.get("rank"),
     )
+    card_paths_str = ",".join(str(p) for p in card_paths)
 
     caption = f"{COUPANG_DISCLOSURE}\n\n오늘 소개한 상품, 다시 한 번 정리해드려요 📝\n\n" \
               f"{product_name} ({entry['price']:,}원대)\n\n프로필 링크에서 다시 확인하세요"
     if entry.get("rank") is not None:
         caption = f"\U0001F50E [No.{entry['rank']}] 이 번호로 프로필 링크에서 다시 찾을 수 있어요\n\n{caption}"
 
-    out_path = work_dir / "threads_cards_result.json"
-    cmd = [
-        "python3", str(HERE / "post_threads.py"), "--mode", "carousel",
-        "--images", ",".join(str(p) for p in card_paths),
-        "--caption", caption, "--out", str(out_path),
-    ]
-    print("+", " ".join(cmd))
-    subprocess.run(cmd, check=True)
-    print("[run_cards] 쓰레드 카드뉴스 발행 완료")
+    # 1. 쓰레드 카드뉴스 — THREADS_USER_ID/THREADS_ACCESS_TOKEN 미설정 시 건너뜀
+    # (계정을 며칠 지켜보는 중이라 아직 비활성, run_pipeline.py 8.56번과 동일 게이트).
+    if os.environ.get("THREADS_USER_ID") and os.environ.get("THREADS_ACCESS_TOKEN"):
+        try:
+            threads_out = work_dir / "threads_cards_result.json"
+            _run_captured([
+                "python3", str(HERE / "post_threads.py"), "--mode", "carousel",
+                "--images", card_paths_str, "--caption", caption, "--out", str(threads_out),
+            ])
+            print("[run_cards] 쓰레드 카드뉴스 발행 완료")
+        except Exception as e:
+            print(f"[경고] 쓰레드 카드뉴스 발행 실패 (계속 진행): {e}")
+    else:
+        print("[run_cards] 쓰레드 카드뉴스 건너뜀 (THREADS_USER_ID/THREADS_ACCESS_TOKEN 미설정 — 비활성화 상태)")
+
+    # 2. 인스타그램 캐러셀 — IG_USER_ID/IG_ACCESS_TOKEN은 이미 활성화돼 있으므로
+    # (run_pipeline.py가 매일 릴스를 발행 중) 게이트 없이 바로 시도한다.
+    try:
+        ig_out = work_dir / "instagram_cards_result.json"
+        _run_captured([
+            "python3", str(HERE / "post_instagram.py"), "--mode", "carousel",
+            "--images", card_paths_str, "--caption", caption, "--out", str(ig_out),
+        ])
+        print("[run_cards] 인스타그램 카드뉴스 발행 완료")
+    except Exception as e:
+        print(f"[경고] 인스타그램 카드뉴스 발행 실패 (계속 진행): {e}")
+
+    # 3. 페이스북 카드뉴스(멀티포토) — FACEBOOK_ACCESS_TOKEN도 이미 활성화 상태.
+    try:
+        fb_out = work_dir / "facebook_cards_result.json"
+        _run_captured([
+            "python3", str(HERE / "post_facebook.py"), "--mode", "carousel",
+            "--images", card_paths_str, "--caption", caption, "--out", str(fb_out),
+        ])
+        print("[run_cards] 페이스북 카드뉴스 발행 완료")
+    except Exception as e:
+        print(f"[경고] 페이스북 카드뉴스 발행 실패 (계속 진행): {e}")
+
+    # 4. X — 캐러셀 개념이 없어서 대표 이미지(훅 카드) 1장만 첨부해 재발행.
+    try:
+        _run_captured(["python3", str(HERE / "post_x.py"), "--text", caption, "--image", str(card_paths[0])])
+        print("[run_cards] X 카드뉴스(대표 이미지) 발행 완료")
+    except Exception as e:
+        print(f"[경고] X 카드뉴스 발행 실패 (계속 진행): {e}")
 
 
 if __name__ == "__main__":
