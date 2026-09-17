@@ -152,21 +152,28 @@ def build_hook_card(product_name, hook_speech, product_image_path, rank=None):
         d.text((PAD, y), line, font=name_font, fill=CHARCOAL)
         y += line_h
 
-    img = Image.open(product_image_path).convert("RGBA")
-    img = ImageOps.contain(img, (660, 520))
+    # 2026-09-18: 예전엔 상품사진을 ImageOps.contain으로 줄여 넣고 그 둘레에
+    # 크림색 카드 패널을 덧대는 방식이었는데, 상품사진 자체의 흰 스튜디오
+    # 배경이 사각형 그대로 도드라져서 카드 배경(크림)과 이중 테두리처럼 겹쳐
+    # 보였다("배경이 삐져나온다" 피드백). build_graphics.py의 릴스 상품컷과
+    # 동일하게 crop-to-fill(딱 맞게 꽉 채워 자르기) + 라운드 코너 + 금테를
+    # 사진 가장자리에 바로 둘러서 이중 프레임 없이 한 장의 카드처럼 보이게 함.
+    frame_w, frame_h = 660, 520
+    img = ImageOps.fit(Image.open(product_image_path).convert("RGBA"), (frame_w, frame_h), Image.LANCZOS)
+    mask = Image.new("L", (frame_w, frame_h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, frame_w - 1, frame_h - 1], radius=32, fill=255)
+    framed = Image.new("RGBA", (frame_w, frame_h), (0, 0, 0, 0))
+    framed.paste(img, (0, 0), mask)
+    ImageDraw.Draw(framed).rounded_rectangle([0, 0, frame_w - 1, frame_h - 1], radius=32, outline=(*GOLD[:3], 230), width=4)
 
     fy = y + 34
-    frame_w, frame_h = img.width + 40, img.height + 40
     fx = (W - frame_w) // 2
 
     shadow = Image.new("RGBA", (frame_w + 80, 60), (0, 0, 0, 0))
     ImageDraw.Draw(shadow).ellipse([40, 10, frame_w + 40, 50], fill=(60, 44, 24, 90))
     shadow = shadow.filter(ImageFilter.GaussianBlur(22))
     canvas.alpha_composite(shadow, (fx - 40, fy + frame_h - 26))
-
-    frame = _rounded_panel(frame_w, frame_h, 32, fill_alpha=215)
-    canvas.alpha_composite(frame, (fx, fy))
-    canvas.alpha_composite(img, (fx + 20, fy + 20))
+    canvas.alpha_composite(framed, (fx, fy))
 
     quote_y = fy + frame_h + 46
     hook_font = sfont(38, "Bold")
