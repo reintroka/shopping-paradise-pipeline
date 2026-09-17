@@ -129,10 +129,11 @@ def main():
     except Exception as e:
         print(f"[경고] 페이스북 카드뉴스 발행 실패 (계속 진행): {e}")
 
-    # 4. X — 캐러셀 개념이 없어서 대표 이미지(훅 카드) 1장만 첨부해 재발행.
+    # 4. X — 공식 캐러셀 개념은 없지만 트윗 하나에 이미지 최대 4장까지 첨부 가능해서
+    # (X 자체 한도) 카드 3장을 그대로 다 첨부한다(2026-09-18, post_x.py --images 추가).
     try:
-        _run_captured(["python3", str(HERE / "post_x.py"), "--text", caption, "--image", str(card_paths[0])])
-        print("[run_cards] X 카드뉴스(대표 이미지) 발행 완료")
+        _run_captured(["python3", str(HERE / "post_x.py"), "--text", caption, "--images", card_paths_str])
+        print("[run_cards] X 카드뉴스(3장) 발행 완료")
     except Exception as e:
         print(f"[경고] X 카드뉴스 발행 실패 (계속 진행): {e}")
 

@@ -150,14 +150,14 @@ def upload_media(image_path: str) -> str:
     return media_id
 
 
-def post_tweet(text: str, media_id: str = None) -> dict:
+def post_tweet(text: str, media_ids: list = None) -> dict:
     url = "https://api.twitter.com/2/tweets"
     token = os.environ["X_ACCESS_TOKEN"]
     token_secret = os.environ["X_ACCESS_SECRET"]
     auth = build_auth_header("POST", url, {}, token, token_secret)
     body_dict = {"text": text}
-    if media_id:
-        body_dict["media"] = {"media_ids": [media_id]}
+    if media_ids:
+        body_dict["media"] = {"media_ids": media_ids}
     body = json.dumps(body_dict).encode("utf-8")
     req = urllib.request.Request(url, data=body, headers={"Authorization": auth, "Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=15) as resp:
@@ -271,7 +271,7 @@ def _http_error_with_body(e: urllib.error.HTTPError) -> RuntimeError:
     return RuntimeError(f"HTTP {e.code}: {body}")
 
 
-def post_tweet_with_retry(text: str, media_id: str = None, max_tries: int = 2) -> dict:
+def post_tweet_with_retry(text: str, media_ids: list = None, max_tries: int = 2) -> dict:
     """403은 대부분 중복 콘텐츠 거부로 추정됨 — 재시도 시 문구를 변형한다.
 
     2026-08-31: 기존에는 문구 끝에 이모지 하나만 붙여서 재시도했는데, 이러면
@@ -291,7 +291,7 @@ def post_tweet_with_retry(text: str, media_id: str = None, max_tries: int = 2) -
             stripped = _strip_hashtags(text)
             attempt_text = _truncate_preserving_cta(f"{stripped} {random.choice(VARIATIONS)}")
         try:
-            return post_tweet(attempt_text, media_id)
+            return post_tweet(attempt_text, media_ids)
         except urllib.error.HTTPError as e:
             last_err = _http_error_with_body(e)
             if e.code != 403:
@@ -310,14 +310,20 @@ PROFILE_LINK_PREFIX = "[프로필링크확인] "
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--text", required=True)
-    p.add_argument("--image", help="첨부할 상품 이미지 경로 (선택)")
+    p.add_argument("--image", help="첨부할 이미지 경로 1장 (선택) — --images와 동시 사용 불가")
+    p.add_argument("--images", help="첨부할 이미지 경로 여러 장(콤마 구분, 최대 4장 — X 자체 한도). "
+                                     "2026-09-18: 카드뉴스 재발행용, --image와 동시 사용 불가")
     args = p.parse_args()
+    if args.image and args.images:
+        raise SystemExit("--image와 --images는 동시에 쓸 수 없습니다")
+    image_paths = [s.strip() for s in args.images.split(",") if s.strip()][:4] if args.images else (
+        [args.image] if args.image else [])
     try:
-        media_id = upload_media(args.image) if args.image else None
+        media_ids = [upload_media(img) for img in image_paths] or None
     except urllib.error.HTTPError as e:
         raise _http_error_with_body(e) from None
     text = args.text
     if not text.startswith(PROFILE_LINK_PREFIX):
         text = f"{PROFILE_LINK_PREFIX}{text}"
-    result = post_tweet_with_retry(text, media_id)
+    result = post_tweet_with_retry(text, media_ids)
     print(json.dumps(result, ensure_ascii=False))
