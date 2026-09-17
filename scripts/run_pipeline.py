@@ -332,9 +332,11 @@ def main():
         ]))
 
         def _post_threads_carousel():
+            # 카드뉴스는 영상 오버레이([:20])보다 폭이 넉넉해 원문 그대로 넘긴다 —
+            # build_thread_cards.py가 자체적으로 폭에 맞게 줄이거나 말줄임한다.
             card_paths = build_thread_cards.build_all(
                 work_dir,
-                product["productName"][:20],
+                product["productName"],
                 f"{product['productPrice']:,}원대",
                 product_image_path,
                 (script_data["spec1_title"], script_data["spec1_body"]),
