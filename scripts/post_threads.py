@@ -46,6 +46,10 @@ GRAPH_BASE = f"https://graph.threads.net/{GRAPH_API_VERSION}"
 MEDIA_REPO_URL = "https://github.com/reintroka/shopping-paradise-media.git"
 MEDIA_PAGES_BASE = "https://reintroka.github.io/shopping-paradise-media"
 TOKEN_FILE = "threads_token.json"
+# 쓰레드 게시물 본문은 500자 제한(인스타그램 2200자보다 훨씬 짧음). ig_caption은
+# 맨 앞에 쿠팡 파트너스 고지 문구가 이미 붙어있는 상태(gen_script.py의
+# append_disclosure)라, 뒤쪽만 잘라도 고지 문구는 항상 살아남는다.
+THREADS_TEXT_MAX_LEN = 500
 # 쓰레드 장기 토큰도 인스타그램과 동일하게 60일 유효. 24시간 이후부터 갱신 가능하지만
 # 매일 갱신할 이유가 없어 30일로 잡음(post_instagram.py의 REFRESH_MIN_AGE_DAYS와 동일 근거).
 REFRESH_MIN_AGE_DAYS = 30
@@ -229,6 +233,14 @@ def get_permalink(media_id: str, access_token: str) -> str:
     return result.get("permalink", "")
 
 
+def _truncate_caption(text: str, max_len: int = THREADS_TEXT_MAX_LEN) -> str:
+    """쓰레드 500자 제한에 맞춰 뒤쪽만 자른다. 쿠팡 파트너스 고지 문구는 항상 맨
+    앞에 있으므로(gen_script.py) 이 방식으로는 절대 잘리지 않는다."""
+    if len(text) <= max_len:
+        return text
+    return text[:max_len - 1].rstrip() + "…"
+
+
 def _finish_and_write(threads_user_id, access_token, container_id, out_path, tag):
     publish_result = publish_container(threads_user_id, access_token, container_id)
     media_id = publish_result.get("id")
@@ -300,6 +312,7 @@ def main():
 
     threads_user_id = os.environ["THREADS_USER_ID"]
     access_token = get_valid_access_token()
+    args.caption = _truncate_caption(args.caption)
 
     if args.mode == "video":
         if not args.video:
