@@ -19,6 +19,9 @@
   8. X 포스트 (post_x, 상품 이미지 첨부 + 403 시 문구 변형 1회 재시도) — 실패해도 계속 진행(부가 기능)
   8.5. 인스타그램 Reels 발행 (post_instagram, GitHub Pages 임시 호스팅 경유) — 실패해도 계속 진행
   8.55. 페이스북 페이지 발행 (post_facebook, 인스타그램과 동일 캡션) — 실패해도 계속 진행
+  8.56. 쓰레드 발행 (post_threads, 인스타그램과 동일 캡션) — THREADS_USER_ID/
+        THREADS_ACCESS_TOKEN 클라우드 환경변수가 없으면 비활성화로 간주해 조용히
+        건너뜀(2026-09-18, 신규 계정이라 며칠간 자동 발행 보류 — 사용자 지시)
   8.6. 틱톡 받은편지함(초안) 전달 (post_tiktok, 앱 심사 전이라 자동 공개발행 불가 —
        사람이 앱에서 최종 게시해야 함) — 실패해도 계속 진행
   9. 유튜브 댓글 홍보 (post_comment, 재시도 포함) — 실패해도 계속 진행
@@ -30,6 +33,7 @@
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 import urllib.request
@@ -302,6 +306,20 @@ def main():
         "python3", str(HERE / "post_facebook.py"),
         "--video", str(final_video), "--caption", ig_caption, "--out", str(fb_out_path),
     ]))
+
+    # 8.56. 쓰레드 발행 (부가) — THREADS_USER_ID/THREADS_ACCESS_TOKEN 클라우드 환경변수가
+    # 둘 다 등록돼 있을 때만 시도한다. 2026-09-18: 쓰레드 계정을 막 만든 상태라 며칠간
+    # 지켜본 뒤 켜기로 함(사용자 지시) — 두 환경변수를 등록하지 않는 한 조용히 건너뛰어
+    # soft_step_results/텔레그램 알림에 매번 "실패"로 쌓이지 않게 한다. 계정이 안정됐다고
+    # 판단되면 클라우드 환경변수만 채우면 코드 변경 없이 바로 켜진다.
+    if os.environ.get("THREADS_USER_ID") and os.environ.get("THREADS_ACCESS_TOKEN"):
+        threads_out_path = work_dir / "threads_result.json"
+        soft_step("쓰레드", lambda: run_captured([
+            "python3", str(HERE / "post_threads.py"),
+            "--video", str(final_video), "--caption", ig_caption, "--out", str(threads_out_path),
+        ]))
+    else:
+        print("[run_pipeline] 쓰레드 발행 건너뜀 (THREADS_USER_ID/THREADS_ACCESS_TOKEN 미설정 — 비활성화 상태)")
 
     # 8.6. 틱톡 받은편지함(초안) 전달 (부가) — 앱 심사 전이라 API로 바로 공개
     # 발행은 불가, 계정 소유자가 틱톡 앱 알림에서 직접 게시해야 최종 발행됨.
