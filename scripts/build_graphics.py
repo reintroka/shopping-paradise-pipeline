@@ -473,6 +473,16 @@ def build_product_video_assets(out_dir: Path, frame_w=600):
     canvas_size = frame_w + pad * 2
     bg = Image.open(out_dir / "bg_bright.png").convert("RGB")
     patch = bg.crop((product_x, product_y, product_x + canvas_size, product_y + canvas_size))
+    # 2026-09-18 버그 수정: patch가 사각형 그대로라 라운드+골드링(round_mask/ring)과
+    # 합성했을 때 네 모서리에서 사각형 배경이 골드링 바깥으로 삐져나와 보였다
+    # (사용자가 실제 발행 영상 캡처로 확인, No.51 상품컷). round_mask.png와 정확히
+    # 같은 위치(pad, pad)·같은 반경으로 알파를 씌워, 라운드 영역 밖은 투명하게
+    # 만든다 — 그 영역은 합성 시 이미 같은 배경이 밑에 깔려 있어(assemble_video.py가
+    # bg_bright.png를 base로 쓰고 그 위에 이 patch를 올림) 투명해도 이음매가 안 생긴다.
+    patch = patch.convert("RGBA")
+    round_alpha = Image.new("L", (canvas_size, canvas_size), 0)
+    round_alpha.paste(mask, (pad, pad))
+    patch.putalpha(round_alpha)
     patch.save(out_dir / "product_video_backdrop.png")
 
 
