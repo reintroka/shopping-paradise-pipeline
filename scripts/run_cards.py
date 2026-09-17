@@ -137,6 +137,20 @@ def main():
     except Exception as e:
         print(f"[경고] X 카드뉴스 발행 실패 (계속 진행): {e}")
 
+    # 5. 틱톡 사진 모드 받은편지함(초안) — 영상과 마찬가지로 사람이 앱에서 직접
+    # 게시해야 최종 발행됨. PULL_FROM_URL 방식이 이 앱의 심사 등급에서 실제로
+    # 동작하는지 아직 검증 안 됨(post_tiktok.py 모듈 docstring 참고) — 실패해도
+    # 다른 플랫폼에는 영향 없음.
+    try:
+        tt_out = work_dir / "tiktok_cards_result.json"
+        _run_captured([
+            "python3", str(HERE / "post_tiktok.py"), "--mode", "photo",
+            "--images", card_paths_str, "--caption-hint", caption, "--out", str(tt_out),
+        ])
+        print("[run_cards] 틱톡 카드뉴스 받은편지함 전달 완료")
+    except Exception as e:
+        print(f"[경고] 틱톡 카드뉴스 전달 실패 (계속 진행): {e}")
+
 
 if __name__ == "__main__":
     main()

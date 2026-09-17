@@ -1,4 +1,4 @@
-"""shoppingparadise.kr 틱톡에 영상을 전달 (TikTok Content Posting API — Inbox 방식).
+"""shoppingparadise.kr 틱톡에 영상/카드뉴스를 전달 (TikTok Content Posting API — Inbox 방식).
 
 환경변수: TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_REFRESH_TOKEN
 
@@ -14,11 +14,24 @@
 (비공개 저장소)에 최신 값을 저장/조회한다(2026-09-01, "만료 없이 되도록" 요청으로 도입).
 shopping-paradise-pipeline 저장소 자체는 public이라 토큰을 절대 거기 커밋하면 안 됨.
 환경변수는 secrets 저장소에 아직 파일이 없을 때만 쓰이는 최초 시드값이다.
+
+2026-09-18 추가(--mode photo): 카드뉴스(3장)도 틱톡 "사진 모드" 받은편지함으로
+전달한다(사용자 지시 — "쓰레드만 발행하지 말고.. 할수 있는곳에는 다 발행해", 이어서
+"릴스하고 똑같이 넣을수 있어?"). 영상 inbox는 FILE_UPLOAD(직접 바이트 청크 업로드)
+방식만 쓰는데, 이 앱의 심사(audit) 등급이 그 방식만 허용하는 것으로 보여(video
+쪽이 이미 그렇게 구현돼 있음) 사진도 같은 등급 제약을 받을 가능성이 있다 — 다만
+TikTok 공식 문서상 사진 inbox는 PULL_FROM_URL(공개 URL을 틱톡 서버가 직접 가져가는
+방식, 다른 플랫폼 임시 호스팅과 동일한 패턴)이 표준 경로라 이 방식으로 구현했다.
+**주의**: 실제 계정으로 아직 검증 못 함 — 이 앱의 심사 등급이 PULL_FROM_URL을 거부하면
+(사람이 실제로 시도해봐야 확인 가능) 이 스텝만 실패하고 나머지 플랫폼 발행에는 영향
+없다(run_cards.py에서 try/except로 감쌈).
 """
 import argparse
 import json
 import os
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -31,7 +44,10 @@ import secrets_store  # noqa: E402
 TOKEN_FILE = "tiktok_token.json"
 TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 INBOX_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
+CONTENT_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/content/init/"
 STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
+MEDIA_REPO_URL = "https://github.com/reintroka/shopping-paradise-media.git"
+MEDIA_PAGES_BASE = "https://reintroka.github.io/shopping-paradise-media"
 CHUNK_SIZE = 10 * 1024 * 1024  # 여러 청크로 나눌 때 쓰는 기본 청크 크기(TikTok 허용 범위 5MB~64MB 안)
 MIN_CHUNK_SIZE = 5 * 1024 * 1024  # TikTok 최소 청크 크기(마지막 청크는 예외)
 SINGLE_CHUNK_MAX_VIDEO_SIZE = 64 * 1024 * 1024  # 이 이하 영상은 TikTok 규칙상 반드시 단일 청크
@@ -160,14 +176,72 @@ def check_status(access_token: str, publish_id: str) -> dict:
         raise _http_error_with_body(e) from None
 
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--video", required=True)
-    p.add_argument("--caption-hint", default="", help="사람이 앱에서 최종 게시할 때 참고할 캡션 문구(로그/알림용, API로는 전달 안 됨)")
-    p.add_argument("--out", required=True)
-    args = p.parse_args()
+def publish_images_to_temp_host(image_paths: list) -> list:
+    """카드뉴스 이미지를 한 커밋에 모아 한 번에 force push(다른 플랫폼 스크립트와
+    동일한 이유 — 개별 force push하면 앞 이미지의 URL이 지워짐)."""
+    ts = int(time.time())
+    filenames = [f"tt-card{i}-{ts}.png" for i in range(1, len(image_paths) + 1)]
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        for filename, local_path in zip(filenames, image_paths):
+            (tmp_path / filename).write_bytes(Path(local_path).read_bytes())
+        (tmp_path / ".nojekyll").touch()
+        subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin", MEDIA_REPO_URL], check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "-c", "user.email=bot@shopping-paradise.local",
+             "-c", "user.name=shopping-paradise-bot", "commit", "-q", "-m", f"temp host {len(filenames)} file(s)"],
+            check=True,
+        )
+        subprocess.run(["git", "-C", str(tmp_path), "push", "--force", "origin", "HEAD:main"], check=True)
+    return [f"{MEDIA_PAGES_BASE}/{f}" for f in filenames]
 
-    video_path = Path(args.video)
+
+def wait_until_reachable(url: str, timeout_secs: int = 180) -> None:
+    deadline = time.time() + timeout_secs
+    last_err = None
+    while time.time() < deadline:
+        try:
+            req = urllib.request.Request(url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                if resp.status == 200:
+                    return
+        except Exception as e:
+            last_err = e
+        time.sleep(5)
+    raise RuntimeError(f"GitHub Pages URL이 {timeout_secs}초 내에 응답하지 않음: {url} ({last_err})")
+
+
+def init_photo_inbox(access_token: str, image_urls: list) -> dict:
+    """TikTok 공식 문서상 사진 inbox의 표준 경로(PULL_FROM_URL) — 검증 안 됨, 위
+    모듈 docstring 참고."""
+    body = json.dumps({
+        "source_info": {
+            "source": "PULL_FROM_URL",
+            "photo_cover_index": 0,
+            "photo_images": image_urls,
+        },
+        "post_mode": "MEDIA_UPLOAD",
+        "media_type": "PHOTO",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        CONTENT_INIT_URL, data=body,
+        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json; charset=UTF-8"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        raise _http_error_with_body(e) from None
+    if data.get("error", {}).get("code") not in (None, "ok"):
+        raise RuntimeError(f"사진 inbox 초기화 실패: {data}")
+    return data["data"]
+
+
+def post_video(video_path, caption_hint, out_path):
+    video_path = Path(video_path)
     video_size = video_path.stat().st_size
 
     token_data = refresh_access_token()
@@ -185,16 +259,58 @@ def main():
     try:
         status = check_status(access_token, init_data["publish_id"])
     except Exception as e:
-        print(f"[post_tiktok] 상태 조회 실패(무시 가능): {e}")
+        print(f"[post_tiktok:video] 상태 조회 실패(무시 가능): {e}")
 
-    result = {
-        "publish_id": init_data["publish_id"],
-        "status": status,
-        "caption_hint": args.caption_hint,
-    }
-    Path(args.out).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[post_tiktok] 받은편지함(초안)으로 전달 완료: publish_id={init_data['publish_id']}")
-    print("[post_tiktok] 틱톡 앱 알림에서 확인 후 직접 게시해야 최종 발행됩니다.")
+    result = {"publish_id": init_data["publish_id"], "status": status, "caption_hint": caption_hint}
+    Path(out_path).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[post_tiktok:video] 받은편지함(초안)으로 전달 완료: publish_id={init_data['publish_id']}")
+    print("[post_tiktok:video] 틱톡 앱 알림에서 확인 후 직접 게시해야 최종 발행됩니다.")
+
+
+def post_photo(image_paths, caption_hint, out_path):
+    image_urls = publish_images_to_temp_host([Path(p) for p in image_paths])
+    print(f"[post_tiktok:photo] 임시 호스팅 완료: {image_urls}")
+    for url in image_urls:
+        wait_until_reachable(url)
+    print("[post_tiktok:photo] GitHub Pages 배포 확인됨")
+
+    token_data = refresh_access_token()
+    access_token = token_data["access_token"]
+
+    init_data = init_photo_inbox(access_token, image_urls)
+    publish_id = init_data["publish_id"]
+
+    time.sleep(5)
+    status = None
+    try:
+        status = check_status(access_token, publish_id)
+    except Exception as e:
+        print(f"[post_tiktok:photo] 상태 조회 실패(무시 가능): {e}")
+
+    result = {"publish_id": publish_id, "status": status, "caption_hint": caption_hint}
+    Path(out_path).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[post_tiktok:photo] 받은편지함(초안)으로 전달 완료: publish_id={publish_id}")
+    print("[post_tiktok:photo] 틱톡 앱 알림에서 확인 후 직접 게시해야 최종 발행됩니다.")
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--mode", choices=["video", "photo"], default="video")
+    p.add_argument("--video")
+    p.add_argument("--images", help="사진 모드 이미지 경로를 콤마로 구분해서 전달")
+    p.add_argument("--caption-hint", default="", help="사람이 앱에서 최종 게시할 때 참고할 캡션 문구(로그/알림용, API로는 전달 안 됨)")
+    p.add_argument("--out", required=True)
+    args = p.parse_args()
+
+    if args.mode == "video":
+        if not args.video:
+            raise SystemExit("--mode video 에는 --video가 필요합니다")
+        post_video(args.video, args.caption_hint, args.out)
+    elif args.mode == "photo":
+        if not args.images:
+            raise SystemExit("--mode photo 에는 --images가 필요합니다")
+        image_paths = [s.strip() for s in args.images.split(",") if s.strip()]
+        post_photo(image_paths, args.caption_hint, args.out)
 
 
 if __name__ == "__main__":
