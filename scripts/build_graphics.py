@@ -260,10 +260,19 @@ def build_glass_card(out_dir: Path, idx: int, label: str, value: str):
     pad = 40
     canvas = Image.new("RGBA", (card_w + pad * 2, card_h + pad * 2), (0, 0, 0, 0))
 
-    shadow = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
-    ImageDraw.Draw(shadow).rounded_rectangle([0, 0, card_w - 1, card_h - 1], radius=r, fill=(30, 22, 12, 130))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(18))
-    canvas.alpha_composite(shadow, (pad, pad + 10))
+    # 2026-09-18 버그 수정: 그림자를 카드와 같은 크기로 그려서 (pad, pad+10) 위치에
+    # 붙였는데, 계산상 여백(40px)이 넉넉해 보였지만 GaussianBlur(18)의 실제 번짐
+    # 폭이 그보다 커서 캔버스 경계에서 그대로 잘렸다 — 그 결과 카드 모서리 밖으로
+    # 그림자가 각지게 삐져나온 것처럼 보였음(사용자가 실제 발행 영상 캡처로 확인).
+    # 카드보다 확실히 작게(inset) 그림자를 그려서, 블러가 얼마나 퍼지든 캔버스
+    # 경계에 닿기 전에 항상 자연스럽게 옅어지도록 여유를 크게 잡음.
+    shadow_inset = 26
+    shadow_w, shadow_h = card_w - shadow_inset * 2, card_h - shadow_inset * 2
+    shadow = Image.new("RGBA", (shadow_w, shadow_h), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rounded_rectangle(
+        [0, 0, shadow_w - 1, shadow_h - 1], radius=max(4, r - shadow_inset // 2), fill=(30, 22, 12, 150))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(14))
+    canvas.alpha_composite(shadow, (pad + shadow_inset, pad + shadow_inset + 10))
 
     panel = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
     ImageDraw.Draw(panel).rounded_rectangle([0, 0, card_w - 1, card_h - 1], radius=r, fill=(255, 251, 244, 150))
