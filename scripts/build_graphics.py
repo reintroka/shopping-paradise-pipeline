@@ -274,11 +274,21 @@ def build_glass_card(out_dir: Path, idx: int, label: str, value: str):
     shadow = shadow.filter(ImageFilter.GaussianBlur(14))
     canvas.alpha_composite(shadow, (pad + shadow_inset, pad + shadow_inset + 10))
 
+    # 2026-09-18 버그 수정: 패널이 반투명(150/255)이라 바로 밑에 깔린 그림자(어두운
+    # 색)가 패널 전체에 걸쳐 비쳐 보였다 — 카드 가장자리에만 은은하게 보여야 할
+    # 그림자가 카드 안쪽 대부분(특히 텍스트 아래쪽)까지 어둡게 물들이고 있었음
+    # (사용자 지적: "스펙 카드는 왜이래.. 배경처리 잘해봐"). 패널을 훨씬 불투명하게
+    # 올려서 그림자는 카드 바깥 가장자리에서만 살짝 비치고 안쪽은 깨끗하게 보이게 함.
     panel = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
-    ImageDraw.Draw(panel).rounded_rectangle([0, 0, card_w - 1, card_h - 1], radius=r, fill=(255, 251, 244, 150))
+    ImageDraw.Draw(panel).rounded_rectangle([0, 0, card_w - 1, card_h - 1], radius=r, fill=(255, 251, 244, 240))
     canvas.alpha_composite(panel, (pad, pad))
 
-    sheen = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
+    # 2026-09-18 버그 수정: 카드 안쪽에 사각형 회색 얼룩이 보이던 원인 — 이 "사각형
+    # 유리광택" 레이어도 배경을 (0,0,0,0)(검정+투명)으로 채운 뒤 흰색을 블러링해서,
+    # 카드 내부(마스크로 잘리기 전)에서 흰색-검정 경계가 회색 얼룩으로 번졌었음
+    # (골드링과 동일한 원인, 사용자 지적: "스펙 카드는 왜이래.. 배경처리 잘해봐").
+    # 배경을 흰색+알파0으로 채워서 블러 경계에서도 색이 계속 흰 톤을 유지하게 함.
+    sheen = Image.new("RGBA", (card_w, card_h), (255, 255, 255, 0))
     ImageDraw.Draw(sheen).rounded_rectangle([0, 0, card_w - 1, int(card_h * 0.5)], radius=r, fill=(255, 255, 255, 55))
     sheen = sheen.filter(ImageFilter.GaussianBlur(10))
     sheen_mask = Image.new("L", (card_w, card_h), 0)
