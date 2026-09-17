@@ -33,7 +33,7 @@ def save_log(entries: list[dict]):
 def append_entry(character: str, product_name: str, price: int, video_id: str, url: str, coupang_url: str,
                   specs: list[dict] | None = None, product_image: str | None = None,
                   hook_speech: str | None = None, cta_speech: str | None = None, rank: int | None = None,
-                  product_name_full: str | None = None):
+                  product_name_full: str | None = None, ig_caption: str | None = None):
     now_kst = datetime.now(KST)
     entries = load_log()
     entry = {
@@ -65,6 +65,12 @@ def append_entry(character: str, product_name: str, price: int, video_id: str, u
     # 원문도 같이 남겨둠 — 없으면(구버전 항목) run_cards.py가 잘린 이름으로 폴백.
     if product_name_full:
         entry["product_name_full"] = product_name_full
+    # 2026-09-18 추가: ig_caption 원문(고지문+훅+셀링포인트+CTA+해시태그 8~12개
+    # 포함) — 사용자 요청("텔레그램으로 이미지 설명글 태그 보내")으로, 틱톡 수동
+    # 업로드용 텔레그램 메시지가 태그 없는 요약 대신 이미 검증된 완성 캡션을
+    # 그대로 재사용할 수 있게 함(run_cards.py 참고).
+    if ig_caption:
+        entry["ig_caption"] = ig_caption
     entries.append(entry)
     save_log(entries)
     return entries

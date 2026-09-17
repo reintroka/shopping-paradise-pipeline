@@ -402,7 +402,7 @@ def main():
             {"title": script_data["spec3_title"], "body": script_data["spec3_body"]},
         ],
         hook_speech=script_data["hook_speech"], cta_speech=script_data["cta_speech"], rank=product_rank,
-        product_name_full=product["productName"],
+        product_name_full=product["productName"], ig_caption=ig_caption,
     )
 
     # 12. 3일치(6개) 쌓였으면 롱폼 자동 제작+업로드

@@ -145,10 +145,17 @@ def main():
     # audit/URL verification"으로 확인되어 텔레그램 전송으로 교체한 이력을 발견함
     # (commit 824e084, 2026-09-02) — 여기서도 API를 붙였다가 매번 실패하고 조용히
     # 넘어가느니, 처음부터 검증된 방식(텔레그램)을 쓰는 게 낫다고 판단.
+    #
+    # 캡션은 위에서 새로 지은 짧은 recap 문구(caption) 대신, 그날 인스타그램에 이미
+    # 발행됐던 ig_caption 원문을 그대로 재사용한다 — 훅/셀링포인트/CTA는 물론 해시태그
+    # 8~12개까지 이미 다 포함돼 있어서, 사람이 텔레그램에서 그대로 복사해 틱톡에
+    # 붙여넣기만 하면 된다(사용자 요청: "텔레그램으로 이미지 설명글 태그 보내").
+    # ig_caption이 없는 구버전 로그 항목이면 recap 캡션(태그 없음)으로 폴백.
+    tiktok_caption = entry.get("ig_caption") or caption
     try:
         notify_telegram.send_photos(
             [str(p) for p in card_paths],
-            f"🎵 틱톡용 카드뉴스 (수동 업로드 필요)\n\n{caption}",
+            f"🎵 틱톡용 카드뉴스 (수동 업로드 필요)\n\n{tiktok_caption}",
         )
         print("[run_cards] 틱톡용 카드뉴스 텔레그램 전송 완료 (수동 업로드 필요)")
     except Exception as e:
