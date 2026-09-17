@@ -460,7 +460,13 @@ def build_product_video_assets(out_dir: Path, frame_w=600):
     mask.save(out_dir / "round_mask.png")
 
     canvas = Image.new("RGBA", (frame_w + pad * 2, frame_w + pad * 2), (0, 0, 0, 0))
-    ring = Image.new("RGBA", (frame_w, frame_w), (0, 0, 0, 0))
+    # 2026-09-18 버그 수정: 링 바깥으로 어두운 얼룩이 삐져나오는 두 번째 문제(사용자가
+    # 배경 마스크 수정 후에도 "여전히 배경 삐져나온다"고 재확인) — PIL의 GaussianBlur는
+    # 미리 알파를 곱하지(premultiply) 않고 블러링해서, 투명(0,0,0,0) 영역의 검은색이
+    # 반투명 가장자리로 섞여 들어가 골드 대신 거뭇한 얼�룩으로 번짐. 배경을 (0,0,0,0)
+    # 대신 GOLD 색+알파0으로 채워서, 블러로 알파가 옅어지는 가장자리에서도 색상은
+    # 계속 골드 톤을 유지하게 함(검은 얼룩 방지).
+    ring = Image.new("RGBA", (frame_w, frame_w), (*GOLD[:3], 0))
     ImageDraw.Draw(ring).rounded_rectangle([0, 0, frame_w - 1, frame_w - 1], radius=radius, outline=GOLD, width=border)
     canvas.alpha_composite(ring.filter(ImageFilter.GaussianBlur(6)), (pad, pad))
     ImageDraw.Draw(canvas).rounded_rectangle([pad, pad, pad + frame_w - 1, pad + frame_w - 1], radius=radius, outline=GOLD, width=border)
