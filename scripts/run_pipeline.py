@@ -37,14 +37,16 @@ import os
 import subprocess
 import sys
 import urllib.request
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
+PENDING_PATH = REPO_ROOT / "pending_release.json"
+KST = timezone(timedelta(hours=9))
 
 sys.path.insert(0, str(HERE))
 import build_graphics  # noqa: E402
-import build_thread_cards  # noqa: E402
 import heygen_gen  # noqa: E402
 import google_tts  # noqa: E402
 import assemble_video  # noqa: E402
@@ -157,33 +159,57 @@ def main():
     work_dir = REPO_ROOT / "work" / args.character
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. 상품 선정
-    product_path = work_dir / "product.json"
-    run(["python3", str(HERE / "pick_product.py"), "--out", str(product_path)])
-    product = json.loads(product_path.read_text(encoding="utf-8"))
+    # 2026-09-18: run_teaser.py(2시간 전 쓰레드 텍스트 티저)가 미리 상품을 골라
+    # pending_release.json에 저장해뒀으면 그걸 그대로 이어받아 쓴다 — 같은 상품을
+    # 두 번 고르지 않기 위함. 오늘 날짜 것이 아니거나 파일/키가 없으면(티저를
+    # 아직 안 켰거나, 티저 단계가 실패했거나) 기존처럼 새로 고른다 — 자가 치유,
+    # 이 스텝이 없다고 파이프라인 전체가 막히면 안 됨.
+    pending_used = False
+    if PENDING_PATH.exists():
+        try:
+            pending_all = json.loads(PENDING_PATH.read_text(encoding="utf-8"))
+            pending = pending_all.get(args.character)
+            if pending and pending.get("date") == datetime.now(KST).strftime("%Y-%m-%d"):
+                product = pending["product"]
+                script_data = pending["script_data"]
+                product_rank = pending.get("product_rank")
+                pending_used = True
+                print(f"[run_pipeline] run_teaser.py가 예약해둔 상품을 이어받음: {product['productName'][:20]}")
+        except Exception as e:
+            print(f"[경고] pending_release.json 읽기 실패 (새로 고름): {e}")
 
-    # 2. 대본 생성
-    script_path = work_dir / "script.json"
-    run(["python3", str(HERE / "gen_script.py"), "--product-json", str(product_path), "--out", str(script_path)])
-    script_data = json.loads(script_path.read_text(encoding="utf-8"))
+    if not pending_used:
+        # 1. 상품 선정
+        product_path = work_dir / "product.json"
+        run(["python3", str(HERE / "pick_product.py"), "--out", str(product_path)])
+        product = json.loads(product_path.read_text(encoding="utf-8"))
+
+        # 2. 대본 생성
+        script_path = work_dir / "script.json"
+        run(["python3", str(HERE / "gen_script.py"), "--product-json", str(product_path), "--out", str(script_path)])
+        script_data = json.loads(script_path.read_text(encoding="utf-8"))
+
     coupang_url = product.get("shortUrl") or product["productUrl"]
 
-    # 2.5. 링크 페이지 카드 등록 (부가) — 2026-09-10: 원래 10번 단계(인스타 발행 이후)였던 걸
-    # 여기로 앞당김. 화면 번호 배지(build_graphics)와 릴스 캡션에 "몇 번 상품"인지 적어
-    # 나중에 링크 페이지에서 검색하기 쉽게 하려면, 실제로 카드가 등록되어 확정된 순번을
-    # 영상/캡션을 만들기 *전에* 알아야 하기 때문. add_card()가 실패해도(권한/네트워크)
-    # product_rank가 None으로 남을 뿐 파이프라인은 계속 진행되고, 배지/캡션 문구는
-    # 조건부로 생략된다(아래 build_graphics 호출, 8.5 인스타 단계 참고).
-    product_rank = None
-    try:
-        product_rank = update_link_page.add_card(
-            product["productName"][:20], f"{product['productPrice']:,}원대", coupang_url,
-            script_data["hook_speech"], image_url=product["productImage"],
-        )
-        soft_step_results.append(("링크 페이지 업데이트", True, f"{product_rank}번"))
-    except Exception as e:
-        print(f"[경고] 링크 페이지 업데이트 실패 (파이프라인은 계속 진행): {e}")
-        soft_step_results.append(("링크 페이지 업데이트", False, str(e)))
+    if not pending_used:
+        # 2.5. 링크 페이지 카드 등록 (부가) — 2026-09-10: 원래 10번 단계(인스타 발행 이후)였던 걸
+        # 여기로 앞당김. 화면 번호 배지(build_graphics)와 릴스 캡션에 "몇 번 상품"인지 적어
+        # 나중에 링크 페이지에서 검색하기 쉽게 하려면, 실제로 카드가 등록되어 확정된 순번을
+        # 영상/캡션을 만들기 *전에* 알아야 하기 때문. add_card()가 실패해도(권한/네트워크)
+        # product_rank가 None으로 남을 뿐 파이프라인은 계속 진행되고, 배지/캡션 문구는
+        # 조건부로 생략된다(아래 build_graphics 호출, 8.5 인스타 단계 참고).
+        product_rank = None
+        try:
+            product_rank = update_link_page.add_card(
+                product["productName"][:20], f"{product['productPrice']:,}원대", coupang_url,
+                script_data["hook_speech"], image_url=product["productImage"],
+            )
+            soft_step_results.append(("링크 페이지 업데이트", True, f"{product_rank}번"))
+        except Exception as e:
+            print(f"[경고] 링크 페이지 업데이트 실패 (파이프라인은 계속 진행): {e}")
+            soft_step_results.append(("링크 페이지 업데이트", False, str(e)))
+    else:
+        soft_step_results.append(("링크 페이지 업데이트", True, f"{product_rank}번 (티저에서 이미 등록)"))
 
     # 3. 상품 이미지 다운로드 — 쿠팡 CDN이 User-Agent 없는 요청(기본 Python-urllib UA)을
     # 403으로 차단하는 걸 실제로 겪음(다른 채널들의 Pexels/NASA/aiquickdraw.com CDN도
@@ -308,53 +334,28 @@ def main():
         "--video", str(final_video), "--caption", ig_caption, "--out", str(fb_out_path),
     ]))
 
-    # 8.56. 쓰레드 발행 (부가) — THREADS_USER_ID/THREADS_ACCESS_TOKEN 클라우드 환경변수가
-    # 둘 다 등록돼 있을 때만 시도한다. 2026-09-18: 쓰레드 계정을 막 만든 상태라 며칠간
-    # 지켜본 뒤 켜기로 함(사용자 지시) — 두 환경변수를 등록하지 않는 한 조용히 건너뛰어
-    # soft_step_results/텔레그램 알림에 매번 "실패"로 쌓이지 않게 한다. 계정이 안정됐다고
-    # 판단되면 클라우드 환경변수만 채우면 코드 변경 없이 바로 켜진다.
+    # 8.56. 쓰레드 영상 발행 (부가) — THREADS_USER_ID/THREADS_ACCESS_TOKEN 클라우드
+    # 환경변수가 둘 다 등록돼 있을 때만 시도한다. 2026-09-18: 쓰레드 계정을 막 만든
+    # 상태라 며칠간 지켜본 뒤 켜기로 함(사용자 지시) — 두 환경변수를 등록하지 않는
+    # 한 조용히 건너뛰어 soft_step_results/텔레그램 알림에 매번 "실패"로 쌓이지
+    # 않게 한다. 계정이 안정됐다고 판단되면 클라우드 환경변수만 채우면 코드 변경
+    # 없이 바로 켜진다.
     #
-    # 영상 릴스뿐 아니라 텍스트/카드뉴스(캐러셀)도 같이 발행한다 — 사용자가 직접
-    # 운영해보니 쓰레드는 영상보다 글/카드섹션 쪽 조회수가 더 잘 나온다는 피드백
-    # 반영(2026-09-18). 셋 다 같은 날 이미 선정된 이 상품 데이터를 재사용할 뿐,
-    # 별도 상품 선정 로직은 없다.
+    # 2026-09-18 추가: 텍스트 티저는 run_teaser.py(2시간 전), 카드뉴스는
+    # run_cards.py(2시간 후)로 분리했다 — 사용자가 쓰레드를 직접 운영해보니
+    # "텍스트로 궁금하게 → 영상 공개 → 카드뉴스로 정리" 3단계로 하루 안에 나눠
+    # 발행하는 게 좋겠다는 아이디어(사용자 지시). 이 스텝(run_pipeline.py)은 이제
+    # 영상만 올린다 — shorts_log.append_entry에 hook_speech/cta_speech/rank를
+    # 같이 남겨서 2시간 후 run_cards.py가 이 실행을 다시 돌리지 않고도 그 값들로
+    # 카드뉴스를 재구성할 수 있게 한다(아래 11번 참고).
     if os.environ.get("THREADS_USER_ID") and os.environ.get("THREADS_ACCESS_TOKEN"):
         threads_video_out = work_dir / "threads_video_result.json"
         soft_step("쓰레드 영상", lambda: run_captured([
             "python3", str(HERE / "post_threads.py"), "--mode", "video",
             "--video", str(final_video), "--caption", ig_caption, "--out", str(threads_video_out),
         ]))
-
-        threads_text_out = work_dir / "threads_text_result.json"
-        soft_step("쓰레드 텍스트", lambda: run_captured([
-            "python3", str(HERE / "post_threads.py"), "--mode", "text",
-            "--caption", ig_caption, "--out", str(threads_text_out),
-        ]))
-
-        def _post_threads_carousel():
-            # 카드뉴스는 영상 오버레이([:20])보다 폭이 넉넉해 원문 그대로 넘긴다 —
-            # build_thread_cards.py가 자체적으로 폭에 맞게 줄이거나 말줄임한다.
-            card_paths = build_thread_cards.build_all(
-                work_dir,
-                product["productName"],
-                f"{product['productPrice']:,}원대",
-                product_image_path,
-                (script_data["spec1_title"], script_data["spec1_body"]),
-                (script_data["spec2_title"], script_data["spec2_body"]),
-                (script_data["spec3_title"], script_data["spec3_body"]),
-                script_data["hook_speech"],
-                script_data["cta_speech"],
-                rank=product_rank,
-            )
-            threads_carousel_out = work_dir / "threads_carousel_result.json"
-            run_captured([
-                "python3", str(HERE / "post_threads.py"), "--mode", "carousel",
-                "--images", ",".join(str(p) for p in card_paths),
-                "--caption", ig_caption, "--out", str(threads_carousel_out),
-            ])
-        soft_step("쓰레드 카드뉴스", _post_threads_carousel)
     else:
-        print("[run_pipeline] 쓰레드 발행 건너뜀 (THREADS_USER_ID/THREADS_ACCESS_TOKEN 미설정 — 비활성화 상태)")
+        print("[run_pipeline] 쓰레드 영상 발행 건너뜀 (THREADS_USER_ID/THREADS_ACCESS_TOKEN 미설정 — 비활성화 상태)")
 
     # 8.6. 틱톡 받은편지함(초안) 전달 (부가) — 앱 심사 전이라 API로 바로 공개
     # 발행은 불가, 계정 소유자가 틱톡 앱 알림에서 직접 게시해야 최종 발행됨.
@@ -400,6 +401,8 @@ def main():
             {"title": script_data["spec2_title"], "body": script_data["spec2_body"]},
             {"title": script_data["spec3_title"], "body": script_data["spec3_body"]},
         ],
+        hook_speech=script_data["hook_speech"], cta_speech=script_data["cta_speech"], rank=product_rank,
+        product_name_full=product["productName"],
     )
 
     # 12. 3일치(6개) 쌓였으면 롱폼 자동 제작+업로드
@@ -415,13 +418,26 @@ def main():
 
     soft_step("롱폼 자동 컴파일", _compile_longform_step)
 
+    # 2026-09-18: run_teaser.py가 예약해둔 상품을 이어받아 썼다면(pending_used), 이번
+    # 실행으로 소비됐으니 pending_release.json에서 이 character 키를 지운다 — 안
+    # 지우면 다음 날 같은 슬롯 실행이 오늘 날짜 체크에 걸려 자연히 무시되긴 하지만,
+    # 혹시 같은 날 재시도되는 경우 오래된(이미 쓴) 상품을 또 이어받는 걸 방지.
+    if pending_used and PENDING_PATH.exists():
+        try:
+            pending_all = json.loads(PENDING_PATH.read_text(encoding="utf-8"))
+            pending_all.pop(args.character, None)
+            PENDING_PATH.write_text(json.dumps(pending_all, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            print(f"[경고] pending_release.json 정리 실패 (무시하고 계속): {e}")
+
     # 13. used_products.json + shorts_log.json + character_image_history.json
     # (+longform_counter.json, 있으면) 커밋 (핵심 - 중복 방지를 위해 반드시 반영).
     # longform_counter.json/character_image_history.json은 첫 실행 전까지는 존재하지
     # 않을 수 있으므로, 존재하는 파일만 add해야 "pathspec did not match" 에러로 이
     # 필수 스텝 전체가 죽는 걸 피할 수 있다.
     trackable = [
-        f for f in ("used_products.json", "shorts_log.json", "longform_counter.json", "character_image_history.json", "x_post_history.json")
+        f for f in ("used_products.json", "shorts_log.json", "longform_counter.json",
+                     "character_image_history.json", "x_post_history.json", "pending_release.json")
         if (REPO_ROOT / f).exists()
     ]
     run(["git", "-C", str(REPO_ROOT), "add", *trackable])

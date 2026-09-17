@@ -31,7 +31,9 @@ def save_log(entries: list[dict]):
 
 
 def append_entry(character: str, product_name: str, price: int, video_id: str, url: str, coupang_url: str,
-                  specs: list[dict] | None = None, product_image: str | None = None):
+                  specs: list[dict] | None = None, product_image: str | None = None,
+                  hook_speech: str | None = None, cta_speech: str | None = None, rank: int | None = None,
+                  product_name_full: str | None = None):
     now_kst = datetime.now(KST)
     entries = load_log()
     entry = {
@@ -49,6 +51,20 @@ def append_entry(character: str, product_name: str, price: int, video_id: str, u
         entry["specs"] = specs
     if product_image:
         entry["product_image"] = product_image
+    # 2026-09-18 추가: hook_speech/cta_speech/rank — run_cards.py(발행 2시간 후
+    # 쓰레드 카드뉴스)가 이 실행을 다시 돌리지 않고도 이 로그 항목만으로 카드뉴스를
+    # 재구성할 수 있게 하기 위함(사용자 지시: 텍스트→영상→카드뉴스 3단계 발행).
+    if hook_speech:
+        entry["hook_speech"] = hook_speech
+    if cta_speech:
+        entry["cta_speech"] = cta_speech
+    if rank is not None:
+        entry["rank"] = rank
+    # 2026-09-18: 카드뉴스(run_cards.py)의 상품명 자동 줄바꿈/말줄임이 [:20]으로
+    # 잘린 이름보다 원문을 쓰는 게 더 자연스러워서(build_thread_cards.py 참고)
+    # 원문도 같이 남겨둠 — 없으면(구버전 항목) run_cards.py가 잘린 이름으로 폴백.
+    if product_name_full:
+        entry["product_name_full"] = product_name_full
     entries.append(entry)
     save_log(entries)
     return entries
