@@ -28,6 +28,20 @@ sys.path.insert(0, str(HERE))
 import build_thread_cards  # noqa: E402
 import notify_telegram  # noqa: E402
 
+# 2026-09-18: 틱톡용 텔레그램 전송(5번)만 있고, 나머지 4개 플랫폼(쓰레드/인스타/
+# 페북/X) 카드뉴스 발행 결과는 콘솔 경고로만 남고 텔레그램엔 전혀 안 갔음(사용자
+# 지적: "발행 구조 바꾼거 텔레그램 알림은 안오나?"). run_pipeline.py와 동일하게
+# 요약 알림 + 실패 알림을 추가한다.
+step_results = []
+
+
+def notify(text: str) -> None:
+    """텔레그램 알림 전송 자체가 실패해도 파이프라인 결과에 영향을 주지 않게 감싼다."""
+    try:
+        notify_telegram.send(text)
+    except Exception as e:
+        print(f"[경고] 텔레그램 알림 전송 실패: {e}")
+
 
 def _find_todays_entry(character: str) -> dict:
     log_path = REPO_ROOT / "shorts_log.json"
@@ -102,10 +116,13 @@ def main():
                 "--images", card_paths_str, "--caption", caption, "--out", str(threads_out),
             ])
             print("[run_cards] 쓰레드 카드뉴스 발행 완료")
+            step_results.append(("쓰레드", True, None))
         except Exception as e:
             print(f"[경고] 쓰레드 카드뉴스 발행 실패 (계속 진행): {e}")
+            step_results.append(("쓰레드", False, str(e)))
     else:
         print("[run_cards] 쓰레드 카드뉴스 건너뜀 (THREADS_USER_ID/THREADS_ACCESS_TOKEN 미설정 — 비활성화 상태)")
+        step_results.append(("쓰레드", True, "비활성화(미설정) — 건너뜀"))
 
     # 2. 인스타그램 캐러셀 — IG_USER_ID/IG_ACCESS_TOKEN은 이미 활성화돼 있으므로
     # (run_pipeline.py가 매일 릴스를 발행 중) 게이트 없이 바로 시도한다.
@@ -116,8 +133,10 @@ def main():
             "--images", card_paths_str, "--caption", caption, "--out", str(ig_out),
         ])
         print("[run_cards] 인스타그램 카드뉴스 발행 완료")
+        step_results.append(("인스타그램", True, None))
     except Exception as e:
         print(f"[경고] 인스타그램 카드뉴스 발행 실패 (계속 진행): {e}")
+        step_results.append(("인스타그램", False, str(e)))
 
     # 3. 페이스북 카드뉴스(멀티포토) — FACEBOOK_ACCESS_TOKEN도 이미 활성화 상태.
     try:
@@ -127,16 +146,20 @@ def main():
             "--images", card_paths_str, "--caption", caption, "--out", str(fb_out),
         ])
         print("[run_cards] 페이스북 카드뉴스 발행 완료")
+        step_results.append(("페이스북", True, None))
     except Exception as e:
         print(f"[경고] 페이스북 카드뉴스 발행 실패 (계속 진행): {e}")
+        step_results.append(("페이스북", False, str(e)))
 
     # 4. X — 공식 캐러셀 개념은 없지만 트윗 하나에 이미지 최대 4장까지 첨부 가능해서
     # (X 자체 한도) 카드 3장을 그대로 다 첨부한다(2026-09-18, post_x.py --images 추가).
     try:
         _run_captured(["python3", str(HERE / "post_x.py"), "--text", caption, "--images", card_paths_str])
         print("[run_cards] X 카드뉴스(3장) 발행 완료")
+        step_results.append(("X", True, None))
     except Exception as e:
         print(f"[경고] X 카드뉴스 발행 실패 (계속 진행): {e}")
+        step_results.append(("X", False, str(e)))
 
     # 5. 틱톡용 — API(post_tiktok.py --mode photo, PULL_FROM_URL)는 시도하지 않고
     # 처음부터 텔레그램으로 카드 이미지를 바로 전송해 사람이 직접 업로드하게 한다.
@@ -158,9 +181,29 @@ def main():
             f"🎵 틱톡용 카드뉴스 (수동 업로드 필요)\n\n{tiktok_caption}",
         )
         print("[run_cards] 틱톡용 카드뉴스 텔레그램 전송 완료 (수동 업로드 필요)")
+        step_results.append(("틱톡(텔레그램 전송)", True, None))
     except Exception as e:
         print(f"[경고] 틱톡용 텔레그램 전송 실패 (계속 진행): {e}")
+        step_results.append(("틱톡(텔레그램 전송)", False, str(e)))
+
+    # 6. 텔레그램 요약 알림 (run_pipeline.py 14번 스텝과 동일 패턴) — 틱톡 카드
+    # 이미지/캡션은 5번에서 이미 별도 메시지로 갔으니, 여기서는 플랫폼별 성공/
+    # 실패 결과만 한 번 더 요약해서 보낸다(개별 실패가 콘솔 경고로만 남고
+    # 조용히 묻히지 않게).
+    lines = [f"[쇼핑의천국] {args.character} 카드뉴스 마무리 발행 ({product_name})"]
+    for name, ok, note in step_results:
+        if ok and note:
+            lines.append(f"- {name}: {note}")
+        elif ok:
+            lines.append(f"- {name}: 성공")
+        else:
+            lines.append(f"- {name}: 실패 ({note})")
+    notify("\n".join(lines))
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        notify(f"[쇼핑의천국] 카드뉴스 마무리 발행 파이프라인 실패\n{e}")
+        raise

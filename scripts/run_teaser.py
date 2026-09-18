@@ -33,7 +33,22 @@ PENDING_PATH = REPO_ROOT / "pending_release.json"
 KST = timezone(timedelta(hours=9))
 
 sys.path.insert(0, str(HERE))
+import notify_telegram  # noqa: E402
 import update_link_page  # noqa: E402
+
+# 2026-09-18: run_pipeline.py(영상 발행)는 텔레그램 요약/실패 알림이 있는데
+# run_teaser.py는 없어서(사용자 지적: "발행 구조 바꾼거 텔레그램 알림은
+# 안오나?") 카드뉴스 단계처럼 여기도 상품 예약 실패/티저 발행 결과를
+# run_pipeline.py와 동일한 패턴으로 텔레그램에 남긴다.
+step_results = []
+
+
+def notify(text: str) -> None:
+    """텔레그램 알림 전송 자체가 실패해도 파이프라인 결과에 영향을 주지 않게 감싼다."""
+    try:
+        notify_telegram.send(text)
+    except Exception as e:
+        print(f"[경고] 텔레그램 알림 전송 실패: {e}")
 
 
 def run(cmd, **kw):
@@ -153,10 +168,13 @@ def main():
                 "--caption", teaser_text, "--out", str(teaser_out),
             ])
             print("[run_teaser] 쓰레드 텍스트 티저 발행 완료")
+            step_results.append(("쓰레드", True, None))
         except Exception as e:
             print(f"[경고] 쓰레드 텍스트 티저 발행 실패 (계속 진행, 상품 예약은 이미 완료됨): {e}")
+            step_results.append(("쓰레드", False, str(e)))
     else:
         print("[run_teaser] 쓰레드 텍스트 티저 건너뜀 (THREADS_USER_ID/THREADS_ACCESS_TOKEN 미설정 — 비활성화 상태)")
+        step_results.append(("쓰레드", True, "비활성화(미설정) — 건너뜀"))
 
     # 6b. 페이스북 페이지 텍스트 티저 — FACEBOOK_ACCESS_TOKEN은 이미 활성화돼 있으므로
     # (run_pipeline.py가 매일 영상을 발행 중) 게이트 없이 바로 시도한다.
@@ -167,17 +185,37 @@ def main():
             "--caption", teaser_text, "--out", str(fb_teaser_out),
         ])
         print("[run_teaser] 페이스북 텍스트 티저 발행 완료")
+        step_results.append(("페이스북", True, None))
     except Exception as e:
         print(f"[경고] 페이스북 텍스트 티저 발행 실패 (계속 진행): {e}")
+        step_results.append(("페이스북", False, str(e)))
 
     # 6c. X 텍스트 티저 — post_x.py는 --image가 원래 선택 인자라 텍스트 단독
     # 트윗을 그대로 지원한다(코드 변경 불필요).
     try:
         run_captured(["python3", str(HERE / "post_x.py"), "--text", teaser_text])
         print("[run_teaser] X 텍스트 티저 발행 완료")
+        step_results.append(("X", True, None))
     except Exception as e:
         print(f"[경고] X 텍스트 티저 발행 실패 (계속 진행): {e}")
+        step_results.append(("X", False, str(e)))
+
+    # 7. 텔레그램 요약 알림 (run_pipeline.py 14번 스텝과 동일 패턴) — 상품 예약은
+    # 이미 커밋+푸시됐으니 여기서부터는 플랫폼별 발행 결과만 요약해서 보낸다.
+    lines = [f"[쇼핑의천국] {args.character} 텍스트 티저 ({args.reveal_time} 공개 예고)"]
+    for name, ok, note in step_results:
+        if ok and note:
+            lines.append(f"- {name}: {note}")
+        elif ok:
+            lines.append(f"- {name}: 성공")
+        else:
+            lines.append(f"- {name}: 실패 ({note})")
+    notify("\n".join(lines))
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        notify(f"[쇼핑의천국] 텍스트 티저 파이프라인 실패 (상품 예약 안 됐을 수 있음)\n{e}")
+        raise
