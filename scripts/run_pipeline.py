@@ -158,6 +158,7 @@ def main():
 
     work_dir = REPO_ROOT / "work" / args.character
     work_dir.mkdir(parents=True, exist_ok=True)
+    script_path = work_dir / "script.json"
 
     # 2026-09-18: run_teaser.py(2시간 전 쓰레드 텍스트 티저)가 미리 상품을 골라
     # pending_release.json에 저장해뒀으면 그걸 그대로 이어받아 쓴다 — 같은 상품을
@@ -174,6 +175,13 @@ def main():
                 script_data = pending["script_data"]
                 product_rank = pending.get("product_rank")
                 pending_used = True
+                # heygen_gen.py 등 뒷단계가 --script-json 경로로 파일을 읽으므로,
+                # 이어받은 script_data도 새로 생성했을 때와 같은 경로에 실제로 써둬야
+                # 한다 (2026-09-18 실 발행에서 이 파일이 없어 script_path가 끝내
+                # 할당되지 않는 UnboundLocalError로 파이프라인 전체가 실패했음).
+                script_path.write_text(
+                    json.dumps(script_data, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
                 print(f"[run_pipeline] run_teaser.py가 예약해둔 상품을 이어받음: {product['productName'][:20]}")
         except Exception as e:
             print(f"[경고] pending_release.json 읽기 실패 (새로 고름): {e}")
@@ -185,7 +193,6 @@ def main():
         product = json.loads(product_path.read_text(encoding="utf-8"))
 
         # 2. 대본 생성
-        script_path = work_dir / "script.json"
         run(["python3", str(HERE / "gen_script.py"), "--product-json", str(product_path), "--out", str(script_path)])
         script_data = json.loads(script_path.read_text(encoding="utf-8"))
 
