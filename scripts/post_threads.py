@@ -28,6 +28,7 @@ force push한다 — 그래야 카드1 URL이 카드2 push로 지워지는 일�
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -235,10 +236,34 @@ def get_permalink(media_id: str, access_token: str) -> str:
 
 def _truncate_caption(text: str, max_len: int = THREADS_TEXT_MAX_LEN) -> str:
     """쓰레드 500자 제한에 맞춰 뒤쪽만 자른다. 쿠팡 파트너스 고지 문구는 항상 맨
-    앞에 있으므로(gen_script.py) 이 방식으로는 절대 잘리지 않는다."""
+    앞에 있으므로(gen_script.py) 이 방식으로는 절대 잘리지 않는다.
+
+    2026-09-18: 예전엔 무조건 499자에서 잘라 "…"만 붙였는데, 그러면 문장이 중간에
+    뚝 끊긴 티가 났다(사용자 지시: "잘리더라도.. 글이 중간에 잘리지 않고.. 그전
+    단락까지 나가게.. 마무리되는 느낌이 들게" — coredlab/명리마스터에도 동일 적용).
+    완결된 문단 > 완결된 문장 > 줄바꿈 > 공백 순으로 자르고, 그 정도로도 앞부분
+    40% 이상을 못 건질 때만 마지막 수단으로 공백/강제 절단 + "…"을 쓴다."""
     if len(text) <= max_len:
         return text
-    return text[:max_len - 1].rstrip() + "…"
+
+    head = text[:max_len]
+    min_acceptable = len(head) * 0.4
+
+    paragraph_break = head.rfind("\n\n")
+    sentence_ends = [m.end() for m in re.finditer(r"(?:[.!?]|다\.|요\.)(?=\s|\n|$)", head)]
+    last_sentence_end = sentence_ends[-1] if sentence_ends else -1
+    last_newline = head.rfind("\n")
+    last_space = head.rfind(" ")
+
+    if paragraph_break >= min_acceptable:
+        return head[:paragraph_break].rstrip()
+    if last_sentence_end >= min_acceptable:
+        return head[:last_sentence_end].rstrip()
+    if last_newline >= min_acceptable:
+        return head[:last_newline].rstrip()
+    if last_space >= min_acceptable:
+        return head[:last_space].rstrip() + "…"
+    return head.rstrip() + "…"
 
 
 def _finish_and_write(threads_user_id, access_token, container_id, out_path, tag):

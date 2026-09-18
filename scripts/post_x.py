@@ -213,6 +213,42 @@ def _strip_hashtags(text: str) -> str:
     return re.sub(r"(?<!\S)#\S+", "", text).strip()
 
 
+def _take_weighted_at_boundary(text: str, budget: int) -> str:
+    """예산(X 가중치 기준) 안에서 완결된 문단 > 완결된 문장 > 줄바꿈 > 공백
+    경계까지만 담아 반환한다 — 문장 중간에서 뚝 끊긴 티가 나지 않고 원래 그렇게
+    마무리된 글처럼 보이게 하기 위함(2026-09-18, 사용자 지시: "잘리더라도..
+    글이 중간에 잘리지 않고.. 그전 단락까지 나가게.. 마무리되는 느낌이 들게" —
+    coredlab/명리마스터와 동일 원칙 적용). 어느 경계로도 앞부분 40% 이상을 못
+    건지면(문장이 너무 김) 예산 안 최대 prefix를 그대로 쓴다."""
+    if budget <= 0:
+        return ""
+    head_chars, total = [], 0
+    for ch in text:
+        w = _char_weight(ch)
+        if total + w > budget:
+            break
+        head_chars.append(ch)
+        total += w
+    head = "".join(head_chars)
+    min_acceptable = len(head) * 0.4
+
+    paragraph_break = head.rfind("\n\n")
+    sentence_ends = [m.end() for m in re.finditer(r"(?:[.!?~]|다\.|요\.)(?=\s|\n|$)", head)]
+    last_sentence_end = sentence_ends[-1] if sentence_ends else -1
+    last_newline = head.rfind("\n")
+    last_space = head.rfind(" ")
+
+    if paragraph_break >= min_acceptable:
+        return head[:paragraph_break].rstrip()
+    if last_sentence_end >= min_acceptable:
+        return head[:last_sentence_end].rstrip()
+    if last_newline >= min_acceptable:
+        return head[:last_newline].rstrip()
+    if last_space >= min_acceptable:
+        return head[:last_space].rstrip()
+    return head.rstrip()
+
+
 def _truncate_preserving_cta(text: str, max_weighted: int = X_SAFE_WEIGHTED_LIMIT) -> str:
     """X 가중치 글자수 한도 초과 시 본문만 잘라내고 마지막 문장(대부분 프로필
     링크 유도 CTA, gen_script.py의 cta_phrase)은 항상 보존한다.
@@ -228,35 +264,15 @@ def _truncate_preserving_cta(text: str, max_weighted: int = X_SAFE_WEIGHTED_LIMI
         return text
     sentences = [s for s in re.split(r"(?<=[.!?~])\s+", text.strip()) if s]
     if len(sentences) <= 1:
-        body_chars, total = [], 0
-        for ch in text:
-            w = _char_weight(ch)
-            if total + w > max_weighted:
-                break
-            body_chars.append(ch)
-            total += w
-        return "".join(body_chars).rstrip()
+        return _take_weighted_at_boundary(text, max_weighted)
     cta = sentences[-1]
     body = " ".join(sentences[:-1])
     budget = max_weighted - _weighted_len(cta) - _char_weight(" ")  # 본문-CTA 사이 공백 1자
     if budget <= 0:
         # CTA 자체가 한도를 넘는 극단적 경우 — CTA만 안전하게 잘라서 반환
-        out, total = [], 0
-        for ch in cta:
-            w = _char_weight(ch)
-            if total + w > max_weighted:
-                break
-            out.append(ch)
-            total += w
-        return "".join(out)
-    body_chars, total = [], 0
-    for ch in body:
-        w = _char_weight(ch)
-        if total + w > budget:
-            break
-        body_chars.append(ch)
-        total += w
-    return f"{''.join(body_chars).rstrip()} {cta}"
+        return _take_weighted_at_boundary(cta, max_weighted)
+    body_trunc = _take_weighted_at_boundary(body, budget)
+    return f"{body_trunc} {cta}"
 
 
 def _http_error_with_body(e: urllib.error.HTTPError) -> RuntimeError:
