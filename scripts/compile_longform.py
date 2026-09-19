@@ -44,6 +44,7 @@ from pathlib import Path
 import deepdive_narration
 import google_tts
 import longform_graphics
+import notify_telegram
 import shorts_log
 import upload_youtube
 from longform_graphics import LH, LW
@@ -453,6 +454,19 @@ def _gather_batch(pending: list, work_dir: Path):
             print(f"[compile_longform] {e['video_id']}({e['product_name']}) 다운로드 실패, 영구 스킵: {exc}")
             e["compiled_in"] = "SKIPPED_UNAVAILABLE"
             skipped_any = True
+            # 2026-09-19: 이 스킵은 콘솔 로그에만 남고 조용히 묻혀서, 6개가 다
+            # 찼는데도(예: "대기 중 (6/6)") 실제로는 배치가 5개로 줄어 롱폼이
+            # 안 만들어지는 이유를 사용자가 알 방법이 없었다(사용자가 발견해 질문) —
+            # 알림 전송 자체가 실패해도 이 배치 처리엔 영향 주지 않게 예외를 삼킨다.
+            try:
+                notify_telegram.send(
+                    f"[쇼핑의천국] 롱폼용 영상 다운로드 실패 — 영구 제외\n"
+                    f"{e['video_id']} ({e['product_name']})\n"
+                    f"GCS 백업 없음/만료 + yt-dlp 폴백도 실패한 것으로 추정. "
+                    f"이 항목은 이번 롱폼 배치에서 빠지고 다음 대기 항목으로 채워집니다."
+                )
+            except Exception as notify_exc:
+                print(f"[경고] 다운로드 실패 알림 전송 실패: {notify_exc}")
             continue
         batch.append(e)
         clip_paths[e["video_id"]] = clip_path

@@ -427,11 +427,16 @@ def main():
     # 2026-09-01: pick_product.py 유사도 dedup + push_with_retry(detached HEAD) 수정 이후
     # 숏폼이 며칠간 안정적으로 발행되는 걸 확인, 사용자 확인 후 재개.
     def _compile_longform_step():
-        pending_before = len([e for e in shorts_log.load_log() if not e.get("compiled_in")])
+        # 2026-09-19: 예전엔 check_and_compile() 호출 전에 pending 개수를 미리 세어
+        # 메시지에 썼는데, 시도 도중 다운로드 실패로 항목 하나가 SKIPPED_UNAVAILABLE로
+        # 빠지면(compile_longform._gather_batch) 배치가 6개 밑으로 줄어 롱폼이 안
+        # 만들어지는데도 "대기 중 (6/6)"처럼 다 찬 것으로 보이는 메시지가 나갔다(사용자가
+        # 실제 발행 로그에서 발견해 질문). 시도 "후" 개수를 다시 세어 실제 상태를 보여준다.
         result = compile_longform.check_and_compile()
         if result:
             return f"롱폼 완성! {result['url']}"
-        return f"대기 중 ({pending_before}/6)"
+        pending_after = len([e for e in shorts_log.load_log() if not e.get("compiled_in")])
+        return f"대기 중 ({pending_after}/6)"
 
     soft_step("롱폼 자동 컴파일", _compile_longform_step)
 
