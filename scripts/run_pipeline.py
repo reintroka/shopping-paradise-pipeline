@@ -34,6 +34,7 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.request
@@ -369,16 +370,25 @@ def main():
     # x_post는 X(트위터) 280자 제한에 맞춰 gen_script.py에서 강제로 잘린 값이라 틱톡에
     # 쓰면 문장이 중간에 잘린다. 틱톡 캡션 제한은 2200자로 여유가 있으니, 페이스북과
     # 동일하게 컷 없는 ig_caption을 쓴다(2026-09-10).
+    # 2026-09-19: ig_caption의 "댓글에 '가격'..." 문구는 인스타그램 댓글 자동응답(DM)에
+    # 연결된 것이라 틱톡에는 적용되지 않는다(틱톡은 자동 DM 자체가 없음) — run_cards.py의
+    # 카드뉴스 캡션엔 이미 같은 이유로 제거 처리가 돼 있었는데, 이 영상 발행 경로(메인
+    # 파이프라인)는 빠져있어서 사람이 텔레그램에서 그대로 복사해 틱톡에 붙여넣을 때마다
+    # 실제로 안 되는 DM 안내가 계속 섞여 나갔다(사용자가 실제 발행분 캡션에서 발견해
+    # 신고). 여기서도 동일하게 제거해 바로 복사-붙여넣기 가능한 상태로 만든다.
+    tiktok_caption = re.sub(
+        r"\n?댓글에 '가격'이라고 남겨주시면 DM으로 바로 알려드려요!\n?", "\n", ig_caption,
+    ).strip()
     tiktok_out_path = work_dir / "tiktok_result.json"
     tiktok_ok = soft_step("틱톡 초안 전달", lambda: run_captured([
         "python3", str(HERE / "post_tiktok.py"),
-        "--video", str(final_video), "--caption-hint", ig_caption, "--out", str(tiktok_out_path),
+        "--video", str(final_video), "--caption-hint", tiktok_caption, "--out", str(tiktok_out_path),
     ]))
     # 틱톡은 API로 캡션을 못 넣어 앱에서 직접 붙여넣어야 하므로, 요약 메시지에 섞이지 않게
-    # ig_caption(고지 문구+설명+해시태그가 다 포함된, 잘리지 않은 완성 캡션) 자체를 단독
-    # 메시지로 보내 그대로 복사해 붙여넣을 수 있게 한다.
-    if tiktok_ok and ig_caption:
-        notify(ig_caption)
+    # tiktok_caption(고지 문구+설명+해시태그가 다 포함된, 잘리지 않은 완성 캡션 — DM 안내만
+    # 제거) 자체를 단독 메시지로 보내 그대로 복사해 붙여넣을 수 있게 한다.
+    if tiktok_ok and tiktok_caption:
+        notify(tiktok_caption)
 
     # 9. 유튜브 댓글 (부가, 재시도 포함)
     rank_prefix = f"[No.{product_rank}] " if product_rank is not None else ""
