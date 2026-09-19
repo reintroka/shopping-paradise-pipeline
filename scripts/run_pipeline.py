@@ -333,13 +333,21 @@ def main():
         "--video", str(final_video), "--caption", ig_caption, "--out", str(ig_out_path),
     ]))
 
+    # 2026-09-19: ig_caption의 "댓글에 '가격'..." 문구는 인스타그램 댓글 자동응답(DM)에만
+    # 연결된 것 — 페이스북 페이지/쓰레드/틱톡엔 그 자동응답이 없어 그대로 내보내면 실제로
+    # 안 되는 DM 안내가 섞여 나간다(coredlab의 saju-master/route.ts 등도 이 이유로 인스타
+    # 캡션에만 DM 안내를 붙이고 페이스북/쓰레드 캡션은 별도로 구성함 — 같은 패턴).
+    # 인스타 외 모든 플랫폼은 이 한 줄만 제거한 공통 캡션을 쓴다.
+    no_dm_caption = re.sub(
+        r"\n?댓글에 '가격'이라고 남겨주시면 DM으로 바로 알려드려요!\n?", "\n", ig_caption,
+    ).strip()
+
     # 8.55. 페이스북 페이지 발행 (부가) — FACEBOOK_ACCESS_TOKEN 미설정 시
     # post_facebook.py가 KeyError로 죽고 soft_step이 그걸 잡아 로그만 남긴다.
-    # 인스타그램과 동일한 캡션(ig_caption)을 그대로 사용해 두 플랫폼에 같은 내용이 나가게 한다.
     fb_out_path = work_dir / "facebook_result.json"
     soft_step("페이스북 페이지", lambda: run_captured([
         "python3", str(HERE / "post_facebook.py"),
-        "--video", str(final_video), "--caption", ig_caption, "--out", str(fb_out_path),
+        "--video", str(final_video), "--caption", no_dm_caption, "--out", str(fb_out_path),
     ]))
 
     # 8.56. 쓰레드 영상 발행 (부가) — THREADS_USER_ID/THREADS_ACCESS_TOKEN 클라우드
@@ -360,7 +368,7 @@ def main():
         threads_video_out = work_dir / "threads_video_result.json"
         soft_step("쓰레드 영상", lambda: run_captured([
             "python3", str(HERE / "post_threads.py"), "--mode", "video",
-            "--video", str(final_video), "--caption", ig_caption, "--out", str(threads_video_out),
+            "--video", str(final_video), "--caption", no_dm_caption, "--out", str(threads_video_out),
         ]))
     else:
         print("[run_pipeline] 쓰레드 영상 발행 건너뜀 (THREADS_USER_ID/THREADS_ACCESS_TOKEN 미설정 — 비활성화 상태)")
@@ -368,17 +376,9 @@ def main():
     # 8.6. 틱톡 받은편지함(초안) 전달 (부가) — 앱 심사 전이라 API로 바로 공개
     # 발행은 불가, 계정 소유자가 틱톡 앱 알림에서 직접 게시해야 최종 발행됨.
     # x_post는 X(트위터) 280자 제한에 맞춰 gen_script.py에서 강제로 잘린 값이라 틱톡에
-    # 쓰면 문장이 중간에 잘린다. 틱톡 캡션 제한은 2200자로 여유가 있으니, 페이스북과
-    # 동일하게 컷 없는 ig_caption을 쓴다(2026-09-10).
-    # 2026-09-19: ig_caption의 "댓글에 '가격'..." 문구는 인스타그램 댓글 자동응답(DM)에
-    # 연결된 것이라 틱톡에는 적용되지 않는다(틱톡은 자동 DM 자체가 없음) — run_cards.py의
-    # 카드뉴스 캡션엔 이미 같은 이유로 제거 처리가 돼 있었는데, 이 영상 발행 경로(메인
-    # 파이프라인)는 빠져있어서 사람이 텔레그램에서 그대로 복사해 틱톡에 붙여넣을 때마다
-    # 실제로 안 되는 DM 안내가 계속 섞여 나갔다(사용자가 실제 발행분 캡션에서 발견해
-    # 신고). 여기서도 동일하게 제거해 바로 복사-붙여넣기 가능한 상태로 만든다.
-    tiktok_caption = re.sub(
-        r"\n?댓글에 '가격'이라고 남겨주시면 DM으로 바로 알려드려요!\n?", "\n", ig_caption,
-    ).strip()
+    # 쓰면 문장이 중간에 잘린다. 틱톡 캡션 제한은 2200자로 여유가 있으니, 컷 없는
+    # no_dm_caption(위에서 이미 DM 안내를 제거한 공통 캡션)을 그대로 쓴다(2026-09-10).
+    tiktok_caption = no_dm_caption
     tiktok_out_path = work_dir / "tiktok_result.json"
     tiktok_ok = soft_step("틱톡 초안 전달", lambda: run_captured([
         "python3", str(HERE / "post_tiktok.py"),
