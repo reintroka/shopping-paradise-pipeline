@@ -13,6 +13,7 @@ run_pipeline.py 11번 스텝에서 저장)을 다시 읽어 카드뉴스를 재�
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.request
@@ -174,12 +175,17 @@ def main():
     # 8~12개까지 이미 다 포함돼 있어서, 사람이 텔레그램에서 그대로 복사해 틱톡에
     # 붙여넣기만 하면 된다(사용자 요청: "텔레그램으로 이미지 설명글 태그 보내").
     # ig_caption이 없는 구버전 로그 항목이면 recap 캡션(태그 없음)으로 폴백.
+    # ig_caption의 "댓글에 '가격'..." 문구는 인스타그램 댓글 자동응답(DM)에 연결된
+    # 것이라 틱톡에는 적용되지 않는다(틱톡은 자동 DM 자체가 없음) — 그대로 두면
+    # 사람이 복붙할 때마다 매번 지워야 해서, 여기서 미리 제거해 캡션을 바로
+    # 복사-붙여넣기 가능한 상태로 만든다(2026-09-19, 사용자 요청).
     tiktok_caption = entry.get("ig_caption") or caption
+    tiktok_caption = re.sub(
+        r"\n?댓글에 '가격'이라고 남겨주시면 DM으로 바로 알려드려요!\n?", "\n", tiktok_caption,
+    ).strip()
     try:
-        notify_telegram.send_photos(
-            [str(p) for p in card_paths],
-            f"🎵 틱톡용 카드뉴스 (수동 업로드 필요)\n\n{tiktok_caption}",
-        )
+        notify_telegram.send("🎵 틱톡용 카드뉴스 (수동 업로드 필요)")
+        notify_telegram.send_photos([str(p) for p in card_paths], tiktok_caption)
         print("[run_cards] 틱톡용 카드뉴스 텔레그램 전송 완료 (수동 업로드 필요)")
         step_results.append(("틱톡(텔레그램 전송)", True, None))
     except Exception as e:
