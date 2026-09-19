@@ -3,3 +3,4 @@ test_work/
 *.pyc
 __pycache__/
 secrets/
+pipeline_run.log
