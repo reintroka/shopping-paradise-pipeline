@@ -31,6 +31,10 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 PENDING_PATH = REPO_ROOT / "pending_release.json"
 KST = timezone(timedelta(hours=9))
+# run_pipeline.py 참고: 신규 쓰레드 계정은 프로필 링크가 조용히 지워지는 제약이 있어
+# "프로필 링크" 문구가 무용지물이 된다 — 쓰레드는 게시물 URL을 자동 하이퍼링크
+# 처리하므로 쓰레드용 텍스트에만 실제 링크를 붙인다.
+LINK_PAGE_URL = "https://reintroka.github.io/sidejoblab-links"
 
 sys.path.insert(0, str(HERE))
 import notify_telegram  # noqa: E402
@@ -162,10 +166,11 @@ def main():
     # 아직 비활성).
     if os.environ.get("THREADS_USER_ID") and os.environ.get("THREADS_ACCESS_TOKEN"):
         teaser_out = work_dir / "threads_teaser_result.json"
+        threads_teaser_text = f"🔗 {LINK_PAGE_URL}\n\n{teaser_text}"
         try:
             run_captured([
                 "python3", str(HERE / "post_threads.py"), "--mode", "text",
-                "--caption", teaser_text, "--out", str(teaser_out),
+                "--caption", threads_teaser_text, "--out", str(teaser_out),
             ])
             print("[run_teaser] 쓰레드 텍스트 티저 발행 완료")
             step_results.append(("쓰레드", True, None))

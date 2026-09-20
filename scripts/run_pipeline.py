@@ -45,6 +45,11 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 PENDING_PATH = REPO_ROOT / "pending_release.json"
 KST = timezone(timedelta(hours=9))
+# 2026-09-20: 신규 쓰레드 계정은 프로필 외부 링크가 조용히 지워지는 제약이 있어(추정 —
+# 메타의 신규 계정 스팸 방지, 인스타/페이스북엔 없는 문제) "프로필 링크에서 확인하세요"
+# 문구가 쓰레드에서는 무용지물이 된다. 쓰레드(+X)는 게시물 본문의 URL을 자동으로
+# 하이퍼링크 처리하므로, 쓰레드용 캡션에만 실제 링크를 텍스트로 덧붙인다(사용자 제안).
+LINK_PAGE_URL = "https://reintroka.github.io/sidejoblab-links"
 
 sys.path.insert(0, str(HERE))
 import build_graphics  # noqa: E402
@@ -366,9 +371,13 @@ def main():
     # 카드뉴스를 재구성할 수 있게 한다(아래 11번 참고).
     if os.environ.get("THREADS_USER_ID") and os.environ.get("THREADS_ACCESS_TOKEN"):
         threads_video_out = work_dir / "threads_video_result.json"
+        # 링크를 맨 앞에 둔다 — _truncate_caption()이 500자 초과 시 뒤쪽부터 자르므로,
+        # 끝에 붙이면 캡션이 조금만 길어도 잘려나간다(쓰레드용 캡션은 실제로 500자를
+        # 자주 넘김). 앞에 두면 쿠팡 고지 문구와 마찬가지로 항상 살아남는다.
+        threads_caption = f"🔗 {LINK_PAGE_URL}\n\n{no_dm_caption}"
         soft_step("쓰레드 영상", lambda: run_captured([
             "python3", str(HERE / "post_threads.py"), "--mode", "video",
-            "--video", str(final_video), "--caption", no_dm_caption, "--out", str(threads_video_out),
+            "--video", str(final_video), "--caption", threads_caption, "--out", str(threads_video_out),
         ]))
     else:
         print("[run_pipeline] 쓰레드 영상 발행 건너뜀 (THREADS_USER_ID/THREADS_ACCESS_TOKEN 미설정 — 비활성화 상태)")
