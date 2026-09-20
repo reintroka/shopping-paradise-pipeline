@@ -50,6 +50,9 @@ KST = timezone(timedelta(hours=9))
 # 문구가 쓰레드에서는 무용지물이 된다. 쓰레드(+X)는 게시물 본문의 URL을 자동으로
 # 하이퍼링크 처리하므로, 쓰레드용 캡션에만 실제 링크를 텍스트로 덧붙인다(사용자 제안).
 LINK_PAGE_URL = "https://reintroka.github.io/sidejoblab-links"
+# gen_script.py의 append_disclosure()와 동일한 문구 — 쓰레드 캡션을 재조립할 때
+# (링크를 맨 앞에 두려고) 기존 위치의 고지 문구를 떼어내 다시 맨 앞으로 옮기는 데 쓴다.
+COUPANG_DISCLOSURE = "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
 
 sys.path.insert(0, str(HERE))
 import build_graphics  # noqa: E402
@@ -373,8 +376,12 @@ def main():
         threads_video_out = work_dir / "threads_video_result.json"
         # 링크를 맨 앞에 둔다 — _truncate_caption()이 500자 초과 시 뒤쪽부터 자르므로,
         # 끝에 붙이면 캡션이 조금만 길어도 잘려나간다(쓰레드용 캡션은 실제로 500자를
-        # 자주 넘김). 앞에 두면 쿠팡 고지 문구와 마찬가지로 항상 살아남는다.
-        threads_caption = f"🔗 {LINK_PAGE_URL}\n\n{no_dm_caption}"
+        # 자주 넘김). 쿠팡 고지 문구도 항상 맨 앞이어야 하므로(gen_script.py 원칙과
+        # 동일), no_dm_caption 중간에 있던 고지 문구를 떼어내 링크보다 먼저 오도록
+        # 재배치한다 — 링크 때문에 고지 문구가 둘째 문단으로 밀려나지 않게.
+        threads_caption = f"{COUPANG_DISCLOSURE}\n\n🔗 {LINK_PAGE_URL}\n\n" + (
+            no_dm_caption.replace(f"{COUPANG_DISCLOSURE}\n\n", "", 1)
+        )
         soft_step("쓰레드 영상", lambda: run_captured([
             "python3", str(HERE / "post_threads.py"), "--mode", "video",
             "--video", str(final_video), "--caption", threads_caption, "--out", str(threads_video_out),

@@ -116,7 +116,11 @@ def main():
     if os.environ.get("THREADS_USER_ID") and os.environ.get("THREADS_ACCESS_TOKEN"):
         try:
             threads_out = work_dir / "threads_cards_result.json"
-            threads_caption = f"🔗 {LINK_PAGE_URL}\n\n{caption}"
+            # 쿠팡 고지 문구를 맨 앞으로 재배치(run_pipeline.py와 동일 이유) —
+            # 링크 때문에 고지 문구가 둘째 문단으로 밀려나지 않게.
+            threads_caption = f"{COUPANG_DISCLOSURE}\n\n🔗 {LINK_PAGE_URL}\n\n" + (
+                caption.replace(f"{COUPANG_DISCLOSURE}\n\n", "", 1)
+            )
             _run_captured([
                 "python3", str(HERE / "post_threads.py"), "--mode", "carousel",
                 "--images", card_paths_str, "--caption", threads_caption, "--out", str(threads_out),
