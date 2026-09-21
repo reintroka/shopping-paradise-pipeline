@@ -60,57 +60,96 @@ MEDIA_UPLOAD_URL = "https://api.x.com/2/media/upload"
 MEDIA_CHUNK_SIZE = 4 * 1024 * 1024  # X의 5MB 청크 제한보다 여유있게
 
 
+def _call_with_retry(fn, max_attempts: int = 4):
+    """429/5xx(서버 쪽 일시적 문제)와 순수 네트워크 예외(TimeoutError/ConnectionError/
+    URLError)를 지수 백오프로 재시도한다(2026-09-21, 코어디웹 인스타그램 발행 실패
+    재점검 중 같은 패턴을 전체 채널에서 발견해 이식 — 지금까지 이 파일의 urlopen
+    호출엔 timeout은 있었지만 이런 재시도가 전혀 없었다). OAuth 1.0a는 요청마다
+    nonce/timestamp를 새로 서명해야 하므로(같은 서명을 재전송하면 X가 재전송
+    공격으로 간주해 거부할 수 있음) urlopen 자체가 아니라 fn()을 통째로 다시
+    호출해 서명도 매번 새로 만든다. 4xx(요청 자체가 잘못된 경우, 403 중복 콘텐츠
+    포함)는 재시도해도 안 고쳐지므로 그대로 올려서 호출부(post_tweet_with_retry의
+    문구 변형 재시도 등)가 처리하게 한다."""
+    last_exc: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            return fn()
+        except urllib.error.HTTPError as e:
+            if e.code == 429 or e.code >= 500:
+                last_exc = e
+            else:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            last_exc = e
+        if attempt < max_attempts - 1:
+            wait = 2 ** attempt
+            print(f"  [post_x] 요청 실패({last_exc}), {wait}초 후 재시도 ({attempt + 1}/{max_attempts})")
+            time.sleep(wait)
+    if isinstance(last_exc, urllib.error.HTTPError):
+        raise _http_error_with_body(last_exc) from None
+    raise RuntimeError(f"요청이 {max_attempts}회 재시도 후에도 실패했습니다: {last_exc}") from last_exc
+
+
 def _init_media_upload(total_bytes: int, media_type: str, media_category: str) -> str:
-    url = f"{MEDIA_UPLOAD_URL}/initialize"
-    token = os.environ["X_ACCESS_TOKEN"]
-    token_secret = os.environ["X_ACCESS_SECRET"]
-    auth = build_auth_header("POST", url, {}, token, token_secret)
-    body = json.dumps(
-        {"media_type": media_type, "media_category": media_category, "total_bytes": total_bytes}
-    ).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=body, headers={"Authorization": auth, "Content-Type": "application/json"}, method="POST"
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
+    def _do():
+        url = f"{MEDIA_UPLOAD_URL}/initialize"
+        token = os.environ["X_ACCESS_TOKEN"]
+        token_secret = os.environ["X_ACCESS_SECRET"]
+        auth = build_auth_header("POST", url, {}, token, token_secret)
+        body = json.dumps(
+            {"media_type": media_type, "media_category": media_category, "total_bytes": total_bytes}
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            url, data=body, headers={"Authorization": auth, "Content-Type": "application/json"}, method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read())
+
+    data = _call_with_retry(_do)
     return data["data"]["id"]
 
 
 def _append_media_chunk(media_id: str, chunk: bytes, segment_index: int) -> None:
-    url = f"{MEDIA_UPLOAD_URL}/{media_id}/append"
-    token = os.environ["X_ACCESS_TOKEN"]
-    token_secret = os.environ["X_ACCESS_SECRET"]
-    # multipart/form-data 바디는 OAuth 1.0a 서명 베이스에서 제외되므로(JSON 바디와 동일)
-    # oauth_* 파라미터만 서명한다.
-    auth = build_auth_header("POST", url, {}, token, token_secret)
+    def _do():
+        url = f"{MEDIA_UPLOAD_URL}/{media_id}/append"
+        token = os.environ["X_ACCESS_TOKEN"]
+        token_secret = os.environ["X_ACCESS_SECRET"]
+        # multipart/form-data 바디는 OAuth 1.0a 서명 베이스에서 제외되므로(JSON 바디와 동일)
+        # oauth_* 파라미터만 서명한다.
+        auth = build_auth_header("POST", url, {}, token, token_secret)
 
-    boundary = "----xmediaboundary"
-    body = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="segment_index"\r\n\r\n'
-        f"{segment_index}\r\n"
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="media"; filename="chunk"\r\n'
-        f"Content-Type: application/octet-stream\r\n\r\n"
-    ).encode("utf-8") + chunk + f"\r\n--{boundary}--\r\n".encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Authorization": auth, "Content-Type": f"multipart/form-data; boundary={boundary}"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        resp.read()
+        boundary = "----xmediaboundary"
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="segment_index"\r\n\r\n'
+            f"{segment_index}\r\n"
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="media"; filename="chunk"\r\n'
+            f"Content-Type: application/octet-stream\r\n\r\n"
+        ).encode("utf-8") + chunk + f"\r\n--{boundary}--\r\n".encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Authorization": auth, "Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            resp.read()
+
+    _call_with_retry(_do)
 
 
 def _finalize_media_upload(media_id: str) -> dict | None:
-    url = f"{MEDIA_UPLOAD_URL}/{media_id}/finalize"
-    token = os.environ["X_ACCESS_TOKEN"]
-    token_secret = os.environ["X_ACCESS_SECRET"]
-    auth = build_auth_header("POST", url, {}, token, token_secret)
-    req = urllib.request.Request(url, data=b"", headers={"Authorization": auth}, method="POST")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
+    def _do():
+        url = f"{MEDIA_UPLOAD_URL}/{media_id}/finalize"
+        token = os.environ["X_ACCESS_TOKEN"]
+        token_secret = os.environ["X_ACCESS_SECRET"]
+        auth = build_auth_header("POST", url, {}, token, token_secret)
+        req = urllib.request.Request(url, data=b"", headers={"Authorization": auth}, method="POST")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read())
+
+    data = _call_with_retry(_do)
     return data.get("data", {}).get("processing_info")
 
 
@@ -120,12 +159,16 @@ def _wait_for_media_processing(media_id: str, initial_check_after_secs) -> None:
     token_secret = os.environ["X_ACCESS_SECRET"]
     for _ in range(30):
         time.sleep(check_after)
-        extra = {"media_id": media_id, "command": "STATUS"}
-        auth = build_auth_header("GET", MEDIA_UPLOAD_URL, extra, token, token_secret)
-        query_url = f"{MEDIA_UPLOAD_URL}?media_id={pct(media_id)}&command=STATUS"
-        req = urllib.request.Request(query_url, headers={"Authorization": auth}, method="GET")
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
+
+        def _do():
+            extra = {"media_id": media_id, "command": "STATUS"}
+            auth = build_auth_header("GET", MEDIA_UPLOAD_URL, extra, token, token_secret)
+            query_url = f"{MEDIA_UPLOAD_URL}?media_id={pct(media_id)}&command=STATUS"
+            req = urllib.request.Request(query_url, headers={"Authorization": auth}, method="GET")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read())
+
+        data = _call_with_retry(_do)
         info = data.get("data", {}).get("processing_info")
         if not info or info.get("state") == "succeeded":
             return
@@ -151,17 +194,20 @@ def upload_media(image_path: str) -> str:
 
 
 def post_tweet(text: str, media_ids: list = None) -> dict:
-    url = "https://api.twitter.com/2/tweets"
-    token = os.environ["X_ACCESS_TOKEN"]
-    token_secret = os.environ["X_ACCESS_SECRET"]
-    auth = build_auth_header("POST", url, {}, token, token_secret)
-    body_dict = {"text": text}
-    if media_ids:
-        body_dict["media"] = {"media_ids": media_ids}
-    body = json.dumps(body_dict).encode("utf-8")
-    req = urllib.request.Request(url, data=body, headers={"Authorization": auth, "Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        return json.loads(resp.read())
+    def _do():
+        url = "https://api.twitter.com/2/tweets"
+        token = os.environ["X_ACCESS_TOKEN"]
+        token_secret = os.environ["X_ACCESS_SECRET"]
+        auth = build_auth_header("POST", url, {}, token, token_secret)
+        body_dict = {"text": text}
+        if media_ids:
+            body_dict["media"] = {"media_ids": media_ids}
+        body = json.dumps(body_dict).encode("utf-8")
+        req = urllib.request.Request(url, data=body, headers={"Authorization": auth, "Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
+
+    return _call_with_retry(_do)
 
 
 VARIATIONS = ["🛍️", "✨", "👍", "🔥", "📦"]

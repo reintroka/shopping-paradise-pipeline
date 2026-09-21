@@ -68,21 +68,43 @@ def _http_error_with_body(e: urllib.error.HTTPError) -> RuntimeError:
 def _get(url: str, params: dict) -> dict:
     query = urllib.parse.urlencode(params)
     req = urllib.request.Request(f"{url}?{query}", method="GET")
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        raise _http_error_with_body(e) from None
+    with _urlopen_with_retry(req, timeout=30) as resp:
+        return json.loads(resp.read())
 
 
 def _post(url: str, params: dict) -> dict:
     body = urllib.parse.urlencode(params).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        raise _http_error_with_body(e) from None
+    with _urlopen_with_retry(req, timeout=30) as resp:
+        return json.loads(resp.read())
+
+
+def _urlopen_with_retry(req: urllib.request.Request, timeout: int, max_attempts: int = 4):
+    """urllib.request.urlopen을 지수 백오프로 재시도한다(2026-09-21, 코어디웹
+    인스타그램 발행 실패 재점검 중 같은 패턴을 전체 채널에서 발견해 이식).
+    지금까지는 이 파일의 _get/_post에 timeout은 있었지만 순수 네트워크 예외
+    (TimeoutError/ConnectionError/URLError)와 429/5xx(서버 쪽 일시적 문제)에
+    재시도가 전혀 없어서, 연결이 한 번만 흔들려도 그 실행 전체가 실패로 끝났다
+    (post_tiktok.py에서 먼저 고친 것과 동일한 패턴). 4xx(요청 자체가 잘못된
+    경우)는 재시도해도 안 고쳐지므로 그대로 올린다."""
+    last_exc: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            if e.code == 429 or e.code >= 500:
+                last_exc = e
+            else:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            last_exc = e
+        if attempt < max_attempts - 1:
+            wait = 2 ** attempt
+            print(f"  [post_threads] 요청 실패({last_exc}), {wait}초 후 재시도 ({attempt + 1}/{max_attempts})")
+            time.sleep(wait)
+    if isinstance(last_exc, urllib.error.HTTPError):
+        raise _http_error_with_body(last_exc) from None
+    raise RuntimeError(f"요청이 {max_attempts}회 재시도 후에도 실패했습니다: {last_exc}") from last_exc
 
 
 def publish_to_temp_host(files: dict) -> dict:
