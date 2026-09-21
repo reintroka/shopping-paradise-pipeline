@@ -62,6 +62,36 @@ def _http_error_with_body(e: urllib.error.HTTPError) -> RuntimeError:
     return RuntimeError(f"HTTP {e.code}: {body}")
 
 
+def _urlopen_with_retry(req: urllib.request.Request, timeout: int, max_attempts: int = 4):
+    """urllib.request.urlopen을 지수 백오프로 재시도한다(2026-09-21 도입).
+
+    지금까지는 HTTPError만 잡고 순수 네트워크 예외(TimeoutError/ConnectionResetError/
+    URLError 등)는 한 번의 일시적 타임아웃에도 그대로 파이프라인 전체가 exit 1로
+    죽었다(쇼핑의천국 male 편, 영상 업로드 청크 전송 중 SSL read timeout으로 틱톡
+    초안 전달만 실패 — HeyGen/Typecast 쪽에서 이미 같은 패턴으로 재시도를 도입한
+    적이 있는데 이 파일엔 빠져 있었음). HTTPError는 429/5xx(서버 쪽 일시적 문제)만
+    재시도하고, 4xx(잘못된 요청/인증 등 재시도해도 안 고쳐지는 에러)는 그대로
+    올린다."""
+    last_exc: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            if e.code == 429 or e.code >= 500:
+                last_exc = e
+            else:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            last_exc = e
+        if attempt < max_attempts - 1:
+            wait = 2 ** attempt
+            print(f"  [post_tiktok] 요청 실패({last_exc}), {wait}초 후 재시도 ({attempt + 1}/{max_attempts})")
+            time.sleep(wait)
+    if isinstance(last_exc, urllib.error.HTTPError):
+        raise _http_error_with_body(last_exc) from None
+    raise RuntimeError(f"틱톡 API 요청이 {max_attempts}회 재시도 후에도 실패했습니다: {last_exc}") from last_exc
+
+
 def refresh_access_token() -> dict:
     """secrets 저장소의 최신 refresh_token으로 access_token을 발급받고, 응답에 담긴
     새로 회전된 refresh_token을 즉시 secrets 저장소에 반영한다(다음 실행이 옛 값으로
@@ -79,11 +109,8 @@ def refresh_access_token() -> dict:
         TOKEN_URL, data=body,
         headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        raise _http_error_with_body(e) from None
+    with _urlopen_with_retry(req, timeout=30) as resp:
+        data = json.loads(resp.read())
     if "access_token" not in data:
         raise RuntimeError(f"토큰 갱신 실패: {data}")
     if data.get("refresh_token"):
@@ -124,11 +151,8 @@ def init_inbox_upload(access_token: str, video_size: int) -> dict:
         headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json; charset=UTF-8"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        raise _http_error_with_body(e) from None
+    with _urlopen_with_retry(req, timeout=30) as resp:
+        data = json.loads(resp.read())
     if data.get("error", {}).get("code") not in (None, "ok"):
         raise RuntimeError(f"업로드 초기화 실패: {data}")
     result = data["data"]
@@ -156,11 +180,8 @@ def upload_video(upload_url: str, video_path: Path, video_size: int, chunk_size:
                 "Content-Range": f"bytes {start}-{end}/{video_size}",
             },
         )
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                resp.read()
-        except urllib.error.HTTPError as e:
-            raise _http_error_with_body(e) from None
+        with _urlopen_with_retry(req, timeout=120) as resp:
+            resp.read()
 
 
 def check_status(access_token: str, publish_id: str) -> dict:
@@ -170,11 +191,8 @@ def check_status(access_token: str, publish_id: str) -> dict:
         headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json; charset=UTF-8"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        raise _http_error_with_body(e) from None
+    with _urlopen_with_retry(req, timeout=30) as resp:
+        return json.loads(resp.read())
 
 
 def publish_images_to_temp_host(image_paths: list) -> list:
