@@ -10,9 +10,14 @@
        (2026-09-10, 원래 10번이었던 걸 앞당김)
   3. 상품 이미지 다운로드
   4. 그래픽 생성 (build_graphics)
-  4.5. 상품 AI영상 생성 (generate_product_video, Seedance 2-mini) — 실패해도 계속 진행,
-       assemble_video.py가 정지이미지로 자동 폴백 (2026-09-11 도입)
-  5. HeyGen 훅/CTA 영상 생성 (heygen_gen) — 여기서부터 비용 발생
+  4.5. HeyGen 훅/CTA 영상 생성 (heygen_gen) — 실패하면 중단. 2026-09-22: 유료인 상품
+       AI영상(다음 단계)보다 먼저 실행하도록 순서를 바꿈 — HeyGen이 막혀있을 때(예:
+       SPACE_ENCRYPTION_DISABLED류 워크스페이스 장애) kie.ai 비용을 매 실행마다
+       헛되이 쓰지 않기 위함(원래는 반대 순서라 HeyGen 실패 시 이미 결제된 상품
+       AI영상이 그냥 버려졌음). 두 단계는 서로 독립적(assemble 단계에서 합쳐짐)이라
+       순서를 바꿔도 안전함.
+  5. 상품 AI영상 생성 (generate_product_video, Seedance 2-mini, 여기서부터 비용 발생) —
+       실패해도 계속 진행, assemble_video.py가 정지이미지로 자동 폴백 (2026-09-11 도입)
   5.5. 스펙 설명 나레이션 생성 (google_tts, Google Cloud TTS — 2026-08-27 헤이젠에서 교체)
   6. ffmpeg 최종 조립 (assemble_video)
   7. 유튜브 공개 업로드 (upload_youtube) — 실패하면 중단(핵심 산출물)
@@ -254,11 +259,27 @@ def main():
         rank=product_rank,
     )
 
-    # 4.5. 상품 AI영상 생성 (부가, 2026-09-11 도입) — 정지사진 대신 Seedance 2-mini로
-    # 실제 회전하는 4초 클립을 만들어 반응률을 높이려는 시도(사용자 요청, 클립당 약
-    # $0.164). 실패해도(크레딧/네트워크/타임아웃 등 무엇이든) product_video_raw.mp4가
-    # 안 만들어질 뿐이고, assemble_video.py가 그 파일 존재여부로 자동 판단해 기존
-    # 정지이미지+크래시줌 경로로 조용히 폴백하므로 발행 자체는 절대 막히지 않는다.
+    # 4.5. HeyGen 생성 (필수) — 2026-09-22: 아래 상품 AI영상(kie.ai, 유료) 단계보다
+    # 먼저 실행하도록 순서를 바꿨다. HeyGen이 SPACE_ENCRYPTION_DISABLED 같은
+    # 워크스페이스 장애로 막혀있을 때, 원래 순서(상품영상 먼저)면 이미 결제된 kie.ai
+    # 영상(클립당 약 $0.164)이 매번 헛되이 버려졌다 — HeyGen을 먼저 시도해 실패하면
+    # 유료 단계 진입 전에 바로 중단되게 함. 두 단계는 서로 독립적(assemble 단계에서
+    # 합쳐짐)이라 순서를 바꿔도 안전하다.
+    char_dir = REPO_ROOT / "assets" / "characters" / args.character
+    run_captured([
+        "python3", str(HERE / "heygen_gen.py"),
+        "--character", args.character,
+        "--char-dir", str(char_dir),
+        "--script-json", str(script_path),
+        "--out-dir", str(work_dir),
+    ])
+
+    # 5. 상품 AI영상 생성 (부가, 비용 발생 지점, 2026-09-11 도입) — 정지사진 대신
+    # Seedance 2-mini로 실제 회전하는 4초 클립을 만들어 반응률을 높이려는 시도(사용자
+    # 요청, 클립당 약 $0.164). 실패해도(크레딧/네트워크/타임아웃 등 무엇이든)
+    # product_video_raw.mp4가 안 만들어질 뿐이고, assemble_video.py가 그 파일
+    # 존재여부로 자동 판단해 기존 정지이미지+크래시줌 경로로 조용히 폴백하므로 발행
+    # 자체는 절대 막히지 않는다.
     #
     # 2026-09-13: 9/12·9/13 연속 3/3 전패(재시도+이미지 리사이즈 이후에도 Task ID조차
     # 안 찍힘)로 한때 이 단계를 비활성화했었음. 오늘의 심리학의 runway_motion.py가
@@ -272,16 +293,6 @@ def main():
         "python3", str(HERE / "generate_product_video.py"),
         "--image", str(product_image_path), "--out", str(product_video_path),
     ]))
-
-    # 5. HeyGen 생성 (비용 발생 지점)
-    char_dir = REPO_ROOT / "assets" / "characters" / args.character
-    run_captured([
-        "python3", str(HERE / "heygen_gen.py"),
-        "--character", args.character,
-        "--char-dir", str(char_dir),
-        "--script-json", str(script_path),
-        "--out-dir", str(work_dir),
-    ])
 
     # 5.5. 스펙 설명 나레이션 3개 (Google Cloud TTS, 스펙 카드 1개당 1개 — 컷 전환과 정확히 동기화하기 위함)
     for i in (1, 2, 3):
