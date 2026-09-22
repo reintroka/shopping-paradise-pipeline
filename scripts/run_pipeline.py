@@ -76,14 +76,19 @@ def run(cmd, **kw):
 
 
 def run_captured(cmd):
-    """soft_step으로 감싸는 부가 스텝(X 포스트, 유튜브 댓글)에서만 쓴다.
+    """run() 대신 이걸 쓰면 실패 시 실제 stdout/stderr 꼬리가 예외 메시지에 담긴다.
 
     2026-08-30: run()은 stdout/stderr를 캡처하지 않아서, 실패 시 soft_step_results에
     쌓이는 메시지가 "Command '[...]' returned non-zero exit status 1." 뿐이었다 —
     post_x.py가 실제 X API 에러 바디(403/401 사유 등)를 stdout에 자세히 찍어줘도
     CalledProcessError.__str__()엔 안 담기니 텔레그램 알림에도, 여기서도 진짜 원인이
     한 번도 보이지 않았다(트위터 실패가 반복돼도 원인을 특정 못 하던 문제의 근본 원인).
-    출력을 캡처해 실패 시 예외 메시지에 꼬리 부분을 포함시킨다."""
+    출력을 캡처해 실패 시 예외 메시지에 꼬리 부분을 포함시킨다.
+
+    2026-09-22: 이 파일의 필수 스텝(pick_product/gen_script/heygen_gen/upload_youtube)이
+    그동안 run()을 그대로 써서 똑같이 진짜 원인 없는 "returned non-zero exit status 1."
+    알림만 보내고 있었음 — heygen_gen.py 실패 텔레그램 알림에서 발견, 나머지 필수
+    스텝도 같은 구멍이라 전부 run_captured로 교체."""
     print("+", " ".join(cmd))
     result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     output = (result.stdout or "") + (result.stderr or "")
@@ -198,11 +203,11 @@ def main():
     if not pending_used:
         # 1. 상품 선정
         product_path = work_dir / "product.json"
-        run(["python3", str(HERE / "pick_product.py"), "--out", str(product_path)])
+        run_captured(["python3", str(HERE / "pick_product.py"), "--out", str(product_path)])
         product = json.loads(product_path.read_text(encoding="utf-8"))
 
         # 2. 대본 생성
-        run(["python3", str(HERE / "gen_script.py"), "--product-json", str(product_path), "--out", str(script_path)])
+        run_captured(["python3", str(HERE / "gen_script.py"), "--product-json", str(product_path), "--out", str(script_path)])
         script_data = json.loads(script_path.read_text(encoding="utf-8"))
 
     coupang_url = product.get("shortUrl") or product["productUrl"]
@@ -270,7 +275,7 @@ def main():
 
     # 5. HeyGen 생성 (비용 발생 지점)
     char_dir = REPO_ROOT / "assets" / "characters" / args.character
-    run([
+    run_captured([
         "python3", str(HERE / "heygen_gen.py"),
         "--character", args.character,
         "--char-dir", str(char_dir),
@@ -301,7 +306,7 @@ def main():
     ]
     if product_rank is not None:
         upload_cmd += ["--rank", str(product_rank)]
-    run(upload_cmd)
+    run_captured(upload_cmd)
     video_info = json.loads(video_id_path.read_text(encoding="utf-8"))
     video_id = video_info["video_id"]
     global uploaded_video_url
