@@ -1,38 +1,38 @@
 {
   "male": {
-    "date": "2026-09-22",
+    "date": "2026-09-23",
     "product": {
-      "productId": 9693580625,
-      "productName": "물걸레 로봇청소기 LDS 맵핑 20000Pa 자동 먼지비움 듀얼 회전 물걸레 앱제어 화이트, 화이트, T144",
-      "productPrice": 800000,
-      "productImage": "https://ads-partners.coupang.com/image1/3Gdb-OqmJp6eUJBG3JrAGHI1ueCidIBo4CQrlBEP8QDNBlTcQuZGUK87JoPZz4iPO-KUfLVyXh21SGx4p_a_xHMijIc5-WvLWTH-0sUWmWPLYFyR-s5_2EzGPkcrFfiEovAYMk4pQ-nO7u_cIH3OwIYSoNvDXM9hYyndMVtZO7gWqbBd-w28QGn-fK_vP7KE0YaUaCtewUoRp0nW2Qq5TCuFPn6et3yqY3U8axiXyiombdGuFdlZNK7bNv7Grp5NRvKA9UtO6zp2vco1VJuaW6FKwEAK6899ITyZRtVhL-nX0AErZobnqeSeqMophBNuUnsSKOTW4PG1Vde5FZ1feHFNw2M-u8h9ajqcw0V6Yt0gxNIAj50X1w9nZfN3PaHYNPRvpIJrnCLcas0S3-jG1XvUUyxW96VmpKbX-jYkXDoNGYTsi05dCHNCoRNK9DEPTfiIMb_Ac3NFOuedz4fF0BcgelYHItnSCXMzDFVLh5fQqearMJbPr5LOe65RY5FMXSmJBlf-KLi2iEunwW_3maCCa26WHOk=",
-      "productUrl": "https://link.coupang.com/re/AFFSDP?lptag=AF2817003&pageKey=9693580625&itemId=28993127196&vendorItemId=95128380827&traceid=V0-153-116f952c004fb2d2&clickBeacon=b529d4a0-b65c-11f1-b2cb-0e5f5ebc27a8%7E3&requestid=20260922170751769087923543&token=31850C%7CMIXED&pt=1&slot=4",
-      "categoryName": "가전디지털",
-      "keyword": "로봇청소기",
-      "rank": 4,
+      "productId": 6942937487,
+      "productName": "코멧 키친 티타늄코팅 프라이팬 2종 세트",
+      "productPrice": 22990,
+      "productImage": "https://ads-partners.coupang.com/image1/QnUxgphlbZjzjzXBQoMDmzFpBrOda4bEE-4c8fenNpfp2KTSHhl0LSJ7NIJUKr00Euw8OlXHuAmiUms8M0I9z4jdCiwyZp-HhylCyid-Cwkhh4MP7FZHbCmm5i3nHqlwdmmlC62I0ni-ElVyzKnupKbn7jRqctgIUQ54oj9yHl_hW_FDPmZWL6qZY3smW-UYSfyjbH1OvsKu10ybYw0LdsBHPrm9sVmWEFPVLEQRUNUafQJlxkRVc4Z-54uNRZMaEb_J9Nv8tZ4ekPtIFUzfE-VnidKmsDUNsDVRVwfzqqL_lgWQsh8M-2hyNvNA9l47TMrC_WVywKNEyaQnrYfGPd0ld-T_3WAvF1A9G0PVTZkhQ1BuCzE2DhRXY5CnVyoiExcW4pM5CFO6oVgEyRgNtyjxAxaPC_cMNtpKMYE8uj-q-bybOWyCXaHfW_kD7thbo3sLN3iHoHRX40N4Db3lWcfSVSUZegpA_PS0R0izHJkyozWGx0g03M894TUod3GscS1wfwoSy2EnKgJ772Ge3rTh",
+      "productUrl": "https://link.coupang.com/re/AFFSDP?lptag=AF2817003&pageKey=6942937487&itemId=16842048503&vendorItemId=84021255493&traceid=V0-153-436b9de2b299821f&requestid=20260923170847626000462326&token=31850C%7CMIXED&pt=0&slot=7",
+      "categoryName": "주방용품",
+      "keyword": "프라이팬세트",
+      "rank": 7,
       "isRocket": true,
       "isFreeShipping": false,
-      "shortUrl": "https://link.coupang.com/a/hfwfeHm2Sq"
+      "shortUrl": "https://link.coupang.com/a/hhbdqfMLqS"
     },
     "script_data": {
-      "hook_title_line1": "청소는 이제",
-      "hook_title_line2": "로봇에게 맡기세요",
-      "hook_speech": "청소 돌려놓고 완벽한 자유를 누려보세요!",
+      "hook_title_line1": "요리의 퀄리티가",
+      "hook_title_line2": "달라집니다",
+      "hook_speech": "매일 쓰는 프라이팬, 늘러붙고 지저분해서 고민이셨나요?",
       "cta_speech": "지금 바로 프로필 링크에서 만나보세요!",
-      "spec1_title": "LDS 맵핑",
-      "spec1_body": "집안 구조를 정밀하게 스캔",
-      "spec2_title": "20000Pa",
-      "spec2_body": "강력한 흡입력으로 먼지 제거",
-      "spec3_title": "자동 먼지비움",
-      "spec3_body": "손대지 않고 간편하게 관리",
-      "narration_script1": "엘디에스 맵핑 기술로 집안 구석구석을 정밀하게 파악해요",
-      "narration_script2": "이만 파스칼의 압도적인 흡입력으로 미세먼지까지 싹 흡수합니다",
-      "narration_script3": "청소가 끝나면 알아서 먼지까지 비워주는 이 제품의 가격은 팔십만원입니다",
-      "youtube_title": "청소 스트레스 끝판왕! LDS 맵핑 로봇청소기 추천",
-      "youtube_description_intro": "손 하나 까딱 안 하고 집안을 반짝반짝하게 만들어주는 스마트한 로봇청소기를 소개합니다.",
-      "x_post": "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n매번 직접 청소하기 귀찮고 번거로우셨나요? 강력한 흡입력과 자동 먼지비움 기능까지 갖춘 물걸레 로봇청소기 LDS 맵핑 20000Pa 자동 먼지비움 듀얼 회전 물걸레 앱제어 화이트, 화이트, T144 제품을 800,000원에 장만해 보세요! 스마트한 LDS 맵핑으로 완벽한 자율 주행 청소를 경험할 수 있답니다. 프로필에 다 있어요, 구경 가보세요. #로봇청소기 #물걸레로봇청소기 #쇼핑의천국",
-      "ig_caption": "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n🤖 매일 귀찮았던 바닥 청소, 이제 로봇에게 완벽하게 맡겨보세요!\n\n정밀한 LDS 맵핑으로 집안 구조를 꼼꼼하게 스캔하고, 20000Pa의 강력한 흡입력으로 미세먼지까지 싹 잡아줍니다.\n청소가 끝나면 알아서 먼지까지 비워주니 손댈 필요가 전혀 없어요.\n\n프로필 링크에서 자세한 내용을 확인해 보세요.\n댓글에 '가격'이라고 남겨주시면 DM으로 바로 알려드려요!\n\n#로봇청소기 #물걸레로봇청소기 #스마트가전 #원룸가전 #신혼가전추천 #로봇청소기추천 #가전제품 #편리한생활 #살림템 #쇼핑의천국"
+      "spec1_title": "티타늄 코팅",
+      "spec1_body": "강한 내구성으로 늘러붙지 않음",
+      "spec2_title": "2종 세트",
+      "spec2_body": "다양한 요리에 활용 가능한 구성",
+      "spec3_title": "가성비",
+      "spec3_body": "22,990원의 합리적인 가격",
+      "narration_script1": "튼튼한 티타늄 코팅으로 음식이 눌러붙지 않아요",
+      "narration_script2": "실속 있는 이 종 세트 구성으로 요리가 더욱 즐거워집니다",
+      "narration_script3": "이 모든 구성을 이만이천구백구십원에 장만할 수 있는 기회예요",
+      "youtube_title": "눌러붙지 않는 요리의 즐거움! 코멧 키친 티타늄코팅 프라이팬 2종 세트",
+      "youtube_description_intro": "매일 쓰는 프라이팬, 이제 튼튼하고 실속 있는 코멧 키친 티타늄코팅 프라이팬 2종 세트로 바꿔보세요.",
+      "x_post": "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n주방 요리를 더 편하게 만들어줄 아이템을 찾고 계셨나요? 코멧 키친 티타늄코팅 프라이팬 2종 세트를 22,990원에 만나보세요! 탄탄한 티타늄 코팅으로 눌러붙지 않고 다양한 요리를 간편하게 소화할 수 있답니다. 가성비 넘치는 주방 필수템을 지금 바로 만나보세요. 더 궁금하면 프로필 들러보세요~ #프라이팬세트",
+      "ig_caption": "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n🍳 매일 쓰는 프라이팬, 요리할 때마다 늘러붙어 답답하셨나요?\n\n강한 내구성을 자랑하는 코멧 키친 티타늄코팅 프라이팬 2종 세트를 준비했어요!\n튼튼한 티타늄 코팅으로 눌러붙지 않아 요리가 더욱 즐거워진답니다.\n실속 있는 두 가지 구성과 22,990원의 합리적인 가격까지 완벽해요.\n\n지금 바로 프로필 링크에서 자세한 내용을 확인해 보세요!\n댓글에 '가격'이라고 남겨주시면 DM으로 바로 알려드려요!\n\n#프라이팬 #프라이팬세트 #코멧키친 #주방용품 #살림템 #혼수가전 #자취템 #주방인테리어 #요리스타그램 #주방템 #쇼핑의천국"
     },
-    "product_rank": 61
+    "product_rank": 63
   }
 }
