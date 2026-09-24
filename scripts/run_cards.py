@@ -76,12 +76,69 @@ def _run_captured(cmd):
     return result
 
 
+def _run(cmd, **kw):
+    print("+", " ".join(cmd))
+    return subprocess.run(cmd, check=True, **kw)
+
+
+def _push_with_retry(repo_root: Path, max_tries: int = 3) -> None:
+    """run_pipeline.py의 동명 함수와 동일한 이유로 필요 — 이 CCR 세션도 레포를
+    detached HEAD로 클론하므로 `git push origin HEAD:main`을 써야 하고, 그 사이
+    origin이 앞서나갔으면(다른 채널/슬롯의 동시 실행) fetch+rebase 후 재시도한다."""
+    for attempt in range(1, max_tries + 1):
+        try:
+            _run(["git", "-C", str(repo_root), "push", "origin", "HEAD:main"])
+            return
+        except subprocess.CalledProcessError as e:
+            if attempt == max_tries:
+                raise
+            print(f"[push_with_retry] push 실패(시도 {attempt}/{max_tries}): {e} — fetch+rebase 후 재시도")
+            _run(["git", "-C", str(repo_root), "fetch", "origin"])
+            _run(["git", "-C", str(repo_root), "rebase", "origin/main"])
+
+
+def _mark_cards_published(character: str) -> None:
+    """오늘자 shorts_log.json 항목에 cards_published_at을 찍어 커밋+푸시한다.
+
+    2026-09-24: 저녁 9시 카드뉴스가 같은 날 두 번 발행되는 사고 발생(사용자 보고) —
+    이 스크립트엔 "오늘 이미 발행했는지" 확인하는 장치가 전혀 없어서, 같은 슬롯이
+    재시도/재트리거되면(예: CCR 세션 재실행, 사람의 수동 재실행) shorts_log.json의
+    같은 항목을 또 읽어 4개 플랫폼에 그대로 재발행했다. 이 스크립트는 매번 새
+    CCR 세션(fresh clone)이라 로컬 work_dir 상태로는 중복을 막을 수 없으므로(
+    docstring 참고), git으로 커밋되는 shorts_log.json 자체에 마커를 남겨 다음
+    실행(다른 세션이어도)이 읽을 수 있게 한다 — mystery-records의 cross-slot
+    duplicate-publish 가드와 동일한 패턴."""
+    log_path = REPO_ROOT / "shorts_log.json"
+    entries = json.loads(log_path.read_text(encoding="utf-8"))
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    matches = [e for e in entries if e.get("date") == today and e.get("character") == character]
+    if not matches:
+        return
+    matches[-1]["cards_published_at"] = datetime.now(KST).isoformat()
+    log_path.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+    _run(["git", "-C", str(REPO_ROOT), "add", "shorts_log.json"])
+    _run(["git", "-C", str(REPO_ROOT), "-c", "user.email=bot@shopping-paradise.local",
+          "-c", "user.name=shopping-paradise-bot", "commit", "-m",
+          f"Mark {character} card news published for {today}"])
+    _push_with_retry(REPO_ROOT)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--character", choices=["female", "male"], required=True)
     args = p.parse_args()
 
     entry = _find_todays_entry(args.character)
+
+    if entry.get("cards_published_at"):
+        # 2026-09-24: 같은 슬롯이 재트리거되면(재시도/수동 재실행) 여기서 조용히
+        # 막는다 — 아래에서 계속 진행하면 4개 플랫폼에 오늘자 카드뉴스를 그대로
+        # 다시 올리게 된다(실제 사고: 9시 발행에서 카드뉴스 2번 발행).
+        msg = (f"[쇼핑의천국] {args.character} 카드뉴스 중복 실행 감지 — 건너뜀 "
+               f"(이미 {entry['cards_published_at']}에 발행됨)")
+        print(f"[run_cards] {msg}")
+        notify(msg)
+        return
 
     work_dir = REPO_ROOT / "work" / args.character
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -200,6 +257,15 @@ def main():
     except Exception as e:
         print(f"[경고] 틱톡용 텔레그램 전송 실패 (계속 진행): {e}")
         step_results.append(("틱톡(텔레그램 전송)", False, str(e)))
+
+    # 5.5. shorts_log.json에 cards_published_at 마커를 남겨 같은 슬롯의 재트리거를
+    # 막는다(위 중복 가드 참고). 개별 플랫폼 성공/실패와 무관하게 여기까지 왔다는 건
+    # 이미 4개 플랫폼에 발행을 "시도"했다는 뜻이므로, 마커 기록 자체가 실패해도
+    # 발행 결과에 영향을 주면 안 된다(콘솔 경고만 남기고 계속 진행).
+    try:
+        _mark_cards_published(args.character)
+    except Exception as e:
+        print(f"[경고] cards_published_at 마커 기록 실패 (무시하고 계속): {e}")
 
     # 6. 텔레그램 요약 알림 (run_pipeline.py 14번 스텝과 동일 패턴) — 틱톡 카드
     # 이미지/캡션은 5번에서 이미 별도 메시지로 갔으니, 여기서는 플랫폼별 성공/
