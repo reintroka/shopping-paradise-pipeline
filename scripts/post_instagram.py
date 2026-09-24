@@ -94,7 +94,12 @@ def _urlopen_with_retry(req: urllib.request.Request, timeout: int, max_attempts:
             if e.code == 429 or e.code >= 500:
                 last_exc = e
             else:
-                raise
+                # 4xx는 재시도해도 안 고쳐지지만, 몸통(에러 사유)을 안 읽고 그냥
+                # raise하면 "HTTP Error 400: Bad Request"처럼 원인을 알 수 없는
+                # 메시지만 텔레그램 알림에 남는다(2026-09-24, 카드뉴스 인스타그램
+                # 발행 400 실패를 실제로 이렇게 놓친 적 있음). 5xx/429와 동일하게
+                # 몸통을 읽어서 실제 Graph API 에러를 알림에 남긴다.
+                raise _http_error_with_body(e) from None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             last_exc = e
         if attempt < max_attempts - 1:

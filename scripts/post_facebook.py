@@ -85,7 +85,10 @@ def _urlopen_with_retry(req: urllib.request.Request, timeout: int, max_attempts:
             if e.code == 429 or e.code >= 500:
                 last_exc = e
             else:
-                raise
+                # 4xx는 재시도해도 안 고쳐지지만, 몸통을 안 읽고 raise하면 원인을
+                # 알 수 없는 메시지만 알림에 남는다(2026-09-24, post_instagram.py의
+                # 같은 패턴에서 실제로 이렇게 놓친 적 있음).
+                raise _http_error_with_body(e) from None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             last_exc = e
         if attempt < max_attempts - 1:
