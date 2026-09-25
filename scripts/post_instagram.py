@@ -235,7 +235,17 @@ def create_reels_container(ig_user_id: str, access_token: str, video_url: str, c
 
 
 def wait_for_container_ready(container_id: str, access_token: str, timeout_secs: int = 300) -> None:
-    """인스타그램이 video_url에서 영상을 내려받아 처리(FINISHED)할 때까지 폴링."""
+    """인스타그램이 video_url에서 영상을 내려받아 처리(FINISHED)할 때까지 폴링.
+
+    2026-09-25: 카드뉴스 캐러셀은 이미지 3장 + 부모 컨테이너까지 컨테이너 4개를 각각
+    이 함수로 폴링하는데, 10초 간격이면 최악의 경우(이미지 처리가 느린 날) 발행 하나당
+    Graph API 호출이 100회를 넘어갈 수 있다. 2일 연속 2시(cards-noon) 타임에서만
+    "Application request limit reached"(코드 4, 시간당 호출량 기반 한도)로 실패했는데
+    9시(cards-evening) 타임은 같은 호출 패턴에서 멀쩡했던 걸 보면, 하루 누적 총량이
+    아니라 짧은 시간에 몰리는 폴링 버스트가 원인일 가능성이 높다 — 간격을 20초로 늘려
+    같은 300초 안에서 호출 횟수를 절반으로 줄인다(동작/기능은 동일, 최악의 경우 대기
+    시간만 약간 늘어남).
+    """
     deadline = time.time() + timeout_secs
     while time.time() < deadline:
         result = _get(f"{GRAPH_BASE}/{container_id}", {"fields": "status_code", "access_token": access_token})
@@ -244,7 +254,7 @@ def wait_for_container_ready(container_id: str, access_token: str, timeout_secs:
             return
         if status == "ERROR":
             raise RuntimeError(f"인스타그램 영상 처리 실패: {result}")
-        time.sleep(10)
+        time.sleep(20)
     raise RuntimeError(f"인스타그램 영상 처리 시간 초과({timeout_secs}초)")
 
 
