@@ -351,12 +351,14 @@ def post_carousel(ig_user_id, access_token, image_paths, caption, out_path):
         wait_until_reachable(url)
     print("[post_instagram:carousel] GitHub Pages 배포 확인됨")
 
-    item_ids = []
-    for url in image_urls:
-        item_id = create_carousel_item_container(ig_user_id, access_token, url)
-        wait_for_container_ready(item_id, access_token)
-        item_ids.append(item_id)
-    print(f"[post_instagram:carousel] 아이템 컨테이너 {len(item_ids)}개 처리 완료")
+    # 2026-09-25: 이미지 캐러셀 아이템 컨테이너는 동영상과 달리 비동기 처리 단계가 없어서
+    # (Meta Graph API 문서상 캐러셀 이미지 아이템은 생성 즉시 준비됨 — status_code 폴링이
+    # 필요한 건 동영상/릴스 컨테이너와 캐러셀 부모 컨테이너뿐) 아이템당 1회씩 걸던
+    # wait_for_container_ready 호출을 제거함. 이미지 3장 캐러셀 기준 Graph API 호출을
+    # 3회 줄여 앱 요청 한도(code 4)에 덜 부딪히게 한다 — 앱리뷰로 한도를 올리기 전까지의
+    # 완화책. id가 정상 반환되면 생성 자체는 성공한 것이므로 안전.
+    item_ids = [create_carousel_item_container(ig_user_id, access_token, url) for url in image_urls]
+    print(f"[post_instagram:carousel] 아이템 컨테이너 {len(item_ids)}개 생성 완료")
 
     container_id = create_carousel_container(ig_user_id, access_token, item_ids, caption)
     print(f"[post_instagram:carousel] 캐러셀 컨테이너 생성: {container_id}")
