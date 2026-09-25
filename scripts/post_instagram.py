@@ -265,6 +265,34 @@ def publish_container(ig_user_id: str, access_token: str, container_id: str) -> 
     )
 
 
+def publish_container_with_retry(
+    ig_user_id: str, access_token: str, container_id: str, max_attempts: int = 3, wait_secs: int = 90
+) -> dict:
+    """마지막 발행 호출에서만 "Application request limit reached"(code 4)를 별도로
+    재시도한다(2026-09-25, male 카드뉴스가 이전에는 멀쩡하던 9시 타임에서도 이 에러로
+    실패해서, "2시에만 터진다"는 이전 가설이 틀렸음이 드러남 — 폴링 간격 완화(20초)만
+    으로는 부족함이 확인됨). _urlopen_with_retry는 이 에러를 코드상 4xx로 보고 바로
+    올리는데, 실제로는 앱 전체 호출량 기반의 일시적 한도라 몇 분 안에 풀리는 경우가
+    많다. 이미지/영상은 이미 호스팅되고 컨테이너까지 다 만들어진 상태라 여기서 포기하면
+    그날 발행 자체가 통째로 날아가므로, 발행 호출만 짧게 대기 후 재시도한다."""
+    last_exc: RuntimeError | None = None
+    for attempt in range(max_attempts):
+        try:
+            return publish_container(ig_user_id, access_token, container_id)
+        except RuntimeError as e:
+            msg = str(e)
+            if '"code":4' not in msg and "request limit reached" not in msg.lower():
+                raise
+            last_exc = e
+            if attempt < max_attempts - 1:
+                print(
+                    f"  [post_instagram] 앱 요청 한도 초과, {wait_secs}초 후 발행 재시도 "
+                    f"({attempt + 1}/{max_attempts})"
+                )
+                time.sleep(wait_secs)
+    raise last_exc
+
+
 def get_permalink(media_id: str, access_token: str) -> str:
     result = _get(f"{GRAPH_BASE}/{media_id}", {"fields": "permalink", "access_token": access_token})
     return result.get("permalink", "")
@@ -301,7 +329,7 @@ def post_video(ig_user_id, access_token, video_path, caption, out_path):
     wait_for_container_ready(container_id, access_token)
     print("[post_instagram:video] 영상 처리 완료(FINISHED)")
 
-    publish_result = publish_container(ig_user_id, access_token, container_id)
+    publish_result = publish_container_with_retry(ig_user_id, access_token, container_id)
     media_id = publish_result.get("id")
     if not media_id:
         raise RuntimeError(f"발행 실패: {publish_result}")
@@ -334,7 +362,7 @@ def post_carousel(ig_user_id, access_token, image_paths, caption, out_path):
     print(f"[post_instagram:carousel] 캐러셀 컨테이너 생성: {container_id}")
     wait_for_container_ready(container_id, access_token)
 
-    publish_result = publish_container(ig_user_id, access_token, container_id)
+    publish_result = publish_container_with_retry(ig_user_id, access_token, container_id)
     media_id = publish_result.get("id")
     if not media_id:
         raise RuntimeError(f"발행 실패: {publish_result}")
