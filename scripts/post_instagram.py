@@ -301,11 +301,6 @@ def publish_container_with_retry(
     raise last_exc
 
 
-def get_permalink(media_id: str, access_token: str) -> str:
-    result = _get(f"{GRAPH_BASE}/{media_id}", {"fields": "permalink", "access_token": access_token})
-    return result.get("permalink", "")
-
-
 def create_carousel_item_container(ig_user_id: str, access_token: str, image_url: str) -> str:
     result = _post(
         f"{GRAPH_BASE}/{ig_user_id}/media",
@@ -342,17 +337,15 @@ def post_video(ig_user_id, access_token, video_path, caption, out_path):
     if not media_id:
         raise RuntimeError(f"발행 실패: {publish_result}")
 
-    # permalink 조회는 알림용일 뿐 발행 자체와 무관하다 — 이 마지막 조회 하나가
-    # API 호출 한도(code 4)나 일시 오류로 실패하면 이미 성공한 발행 전체가
-    # "실패"로 잘못 보고되는 문제가 있어 실패해도 빈 값으로 계속 진행한다.
-    try:
-        permalink = get_permalink(media_id, access_token)
-    except Exception as e:
-        print(f"[경고] permalink 조회 실패(발행 자체는 성공, 무시하고 계속): {e}")
-        permalink = ""
-    result = {"media_id": media_id, "permalink": permalink}
+    # 2026-09-26: permalink 조회(GET)는 발행 자체와 무관한 알림용 호출인데, 이 값을
+    # 실제로 읽는 곳이 run_cards.py/run_pipeline.py 어디에도 없음을 확인함(순수
+    # write-only). 인스타그램 앱이 API 호출 한도에 자주 걸리는 상황(App Review 미제출,
+    # [[shopping_paradise_instagram_app_rate_limit_2026-09-25]])이라 안 쓰는 호출을
+    # 하나라도 줄이는 게 낫다 — 아예 호출하지 않는다(같은 계정군 명리마스터
+    # 코드베이스도 permalink를 조회하지 않음, 참고해서 맞춤).
+    result = {"media_id": media_id}
     Path(out_path).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[post_instagram:video] 발행 완료: {permalink or media_id}")
+    print(f"[post_instagram:video] 발행 완료: {media_id}")
 
 
 def post_carousel(ig_user_id, access_token, image_paths, caption, out_path):
@@ -384,15 +377,10 @@ def post_carousel(ig_user_id, access_token, image_paths, caption, out_path):
     if not media_id:
         raise RuntimeError(f"발행 실패: {publish_result}")
 
-    # post_video와 동일한 이유로 permalink 조회 실패는 무시하고 계속한다.
-    try:
-        permalink = get_permalink(media_id, access_token)
-    except Exception as e:
-        print(f"[경고] permalink 조회 실패(발행 자체는 성공, 무시하고 계속): {e}")
-        permalink = ""
-    result = {"media_id": media_id, "permalink": permalink}
+    # post_video와 동일한 이유로 permalink 조회 자체를 하지 않는다.
+    result = {"media_id": media_id}
     Path(out_path).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[post_instagram:carousel] 발행 완료: {permalink or media_id}")
+    print(f"[post_instagram:carousel] 발행 완료: {media_id}")
 
 
 def main():
