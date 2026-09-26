@@ -268,25 +268,33 @@ def publish_container(ig_user_id: str, access_token: str, container_id: str) -> 
 def publish_container_with_retry(
     ig_user_id: str, access_token: str, container_id: str, max_attempts: int = 3, wait_secs: int = 90
 ) -> dict:
-    """마지막 발행 호출에서만 "Application request limit reached"(code 4)를 별도로
-    재시도한다(2026-09-25, male 카드뉴스가 이전에는 멀쩡하던 9시 타임에서도 이 에러로
-    실패해서, "2시에만 터진다"는 이전 가설이 틀렸음이 드러남 — 폴링 간격 완화(20초)만
-    으로는 부족함이 확인됨). _urlopen_with_retry는 이 에러를 코드상 4xx로 보고 바로
-    올리는데, 실제로는 앱 전체 호출량 기반의 일시적 한도라 몇 분 안에 풀리는 경우가
-    많다. 이미지/영상은 이미 호스팅되고 컨테이너까지 다 만들어진 상태라 여기서 포기하면
-    그날 발행 자체가 통째로 날아가므로, 발행 호출만 짧게 대기 후 재시도한다."""
+    """마지막 발행 호출에서만 "Application request limit reached"(code 4)와
+    "Generic Internal Error"(error_subcode 2207085)를 별도로 재시도한다(2026-09-25,
+    male 카드뉴스가 이전에는 멀쩡하던 9시 타임에서도 code 4 에러로 실패해서, "2시에만
+    터진다"는 이전 가설이 틀렸음이 드러남 — 폴링 간격 완화(20초)만으로는 부족함이
+    확인됨. 2026-09-26, female 카드뉴스에서 이번엔 code 4가 아니라 error_subcode
+    2207085 "Generic Internal Error"/"An internal server error occurred. Please
+    try again later."로 같은 지점에서 실패 — Meta 응답 자체가 재시도를 권하는
+    메시지인데도 재시도 대상이 아니었음). _urlopen_with_retry는 이 에러들을 코드상
+    4xx로 보고 바로 올리는데, 실제로는 Meta 쪽 일시적 문제라 몇 분 안에 풀리는
+    경우가 많다. 이미지/영상은 이미 호스팅되고 컨테이너까지 다 만들어진 상태라
+    여기서 포기하면 그날 발행 자체가 통째로 날아가므로, 발행 호출만 짧게 대기 후
+    재시도한다."""
     last_exc: RuntimeError | None = None
     for attempt in range(max_attempts):
         try:
             return publish_container(ig_user_id, access_token, container_id)
         except RuntimeError as e:
             msg = str(e)
-            if '"code":4' not in msg and "request limit reached" not in msg.lower():
+            is_rate_limit = '"code":4' in msg or "request limit reached" in msg.lower()
+            is_generic_internal = '"error_subcode":2207085' in msg or "generic internal error" in msg.lower()
+            if not is_rate_limit and not is_generic_internal:
                 raise
             last_exc = e
             if attempt < max_attempts - 1:
+                reason = "앱 요청 한도 초과" if is_rate_limit else "Meta 서버 일시 오류(Generic Internal Error)"
                 print(
-                    f"  [post_instagram] 앱 요청 한도 초과, {wait_secs}초 후 발행 재시도 "
+                    f"  [post_instagram] {reason}, {wait_secs}초 후 발행 재시도 "
                     f"({attempt + 1}/{max_attempts})"
                 )
                 time.sleep(wait_secs)
