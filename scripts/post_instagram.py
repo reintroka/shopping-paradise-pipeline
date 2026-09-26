@@ -342,7 +342,14 @@ def post_video(ig_user_id, access_token, video_path, caption, out_path):
     if not media_id:
         raise RuntimeError(f"발행 실패: {publish_result}")
 
-    permalink = get_permalink(media_id, access_token)
+    # permalink 조회는 알림용일 뿐 발행 자체와 무관하다 — 이 마지막 조회 하나가
+    # API 호출 한도(code 4)나 일시 오류로 실패하면 이미 성공한 발행 전체가
+    # "실패"로 잘못 보고되는 문제가 있어 실패해도 빈 값으로 계속 진행한다.
+    try:
+        permalink = get_permalink(media_id, access_token)
+    except Exception as e:
+        print(f"[경고] permalink 조회 실패(발행 자체는 성공, 무시하고 계속): {e}")
+        permalink = ""
     result = {"media_id": media_id, "permalink": permalink}
     Path(out_path).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[post_instagram:video] 발행 완료: {permalink or media_id}")
@@ -377,7 +384,12 @@ def post_carousel(ig_user_id, access_token, image_paths, caption, out_path):
     if not media_id:
         raise RuntimeError(f"발행 실패: {publish_result}")
 
-    permalink = get_permalink(media_id, access_token)
+    # post_video와 동일한 이유로 permalink 조회 실패는 무시하고 계속한다.
+    try:
+        permalink = get_permalink(media_id, access_token)
+    except Exception as e:
+        print(f"[경고] permalink 조회 실패(발행 자체는 성공, 무시하고 계속): {e}")
+        permalink = ""
     result = {"media_id": media_id, "permalink": permalink}
     Path(out_path).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[post_instagram:carousel] 발행 완료: {permalink or media_id}")
