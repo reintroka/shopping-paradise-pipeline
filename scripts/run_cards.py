@@ -126,6 +126,9 @@ def _mark_cards_published(character: str) -> None:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--character", choices=["female", "male"], required=True)
+    p.add_argument("--skip-threads", action="store_true",
+                    help="쓰레드가 이미 발행된 상태에서(예: 타임아웃으로 스크립트가 중간에 끊긴 뒤) "
+                         "나머지 플랫폼만 이어서 발행할 때 사용 — 쓰레드 중복 발행을 막는다")
     args = p.parse_args()
 
     entry = _find_todays_entry(args.character)
@@ -170,7 +173,10 @@ def main():
 
     # 1. 쓰레드 카드뉴스 — THREADS_USER_ID/THREADS_ACCESS_TOKEN 미설정 시 건너뜀
     # (계정을 며칠 지켜보는 중이라 아직 비활성, run_pipeline.py 8.56번과 동일 게이트).
-    if os.environ.get("THREADS_USER_ID") and os.environ.get("THREADS_ACCESS_TOKEN"):
+    if args.skip_threads:
+        print("[run_cards] 쓰레드 카드뉴스 건너뜀 (--skip-threads: 이미 발행된 것으로 간주)")
+        step_results.append(("쓰레드", True, "이미 발행됨(수동 재개) — 건너뜀"))
+    elif os.environ.get("THREADS_USER_ID") and os.environ.get("THREADS_ACCESS_TOKEN"):
         try:
             threads_out = work_dir / "threads_cards_result.json"
             # 쿠팡 고지 문구를 맨 앞으로 재배치(run_pipeline.py와 동일 이유) —
