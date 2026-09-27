@@ -254,6 +254,44 @@ def publish_container(threads_user_id: str, access_token: str, container_id: str
     )
 
 
+def publish_container_with_retry(
+    threads_user_id: str, access_token: str, container_id: str, max_attempts: int = 3, wait_secs: int = 30
+) -> dict:
+    """발행 호출에서만 "Application request limit reached"(code 4), "Generic Internal
+    Error"(error_subcode 2207085), "Media Not Found"(error_subcode 4279009)를 재시도한다
+    (2026-09-27, male 텍스트 티저가 컨테이너 생성+FINISHED 확인까지 다 끝난 상태에서
+    threads_publish 호출만 "The media with id ... cannot be found"(4279009)로 실패 —
+    post_instagram.py의 publish_container_with_retry(code 4/2207085)와 같은 부류의
+    Meta 쪽 처리 지연/eventual-consistency 문제로 판단(is_transient:false로 와도 실제로는
+    몇십 초 안에 풀리는 경우가 많다는 게 그쪽에서 이미 확인된 패턴). 컨테이너는 이미
+    FINISHED로 확인된 상태라 재생성 없이 발행만 재시도하면 된다."""
+    last_exc: RuntimeError | None = None
+    for attempt in range(max_attempts):
+        try:
+            return publish_container(threads_user_id, access_token, container_id)
+        except RuntimeError as e:
+            msg = str(e)
+            is_rate_limit = '"code":4' in msg or "request limit reached" in msg.lower()
+            is_generic_internal = '"error_subcode":2207085' in msg or "generic internal error" in msg.lower()
+            is_media_not_found = '"error_subcode":4279009' in msg or "cannot be found" in msg.lower()
+            if not (is_rate_limit or is_generic_internal or is_media_not_found):
+                raise
+            last_exc = e
+            if attempt < max_attempts - 1:
+                if is_rate_limit:
+                    reason = "앱 요청 한도 초과"
+                elif is_generic_internal:
+                    reason = "Meta 서버 일시 오류(Generic Internal Error)"
+                else:
+                    reason = "컨테이너 미발견(Media Not Found, 처리 지연 추정)"
+                print(
+                    f"  [post_threads] {reason}, {wait_secs}초 후 발행 재시도 "
+                    f"({attempt + 1}/{max_attempts})"
+                )
+                time.sleep(wait_secs)
+    raise last_exc
+
+
 def get_permalink(media_id: str, access_token: str) -> str:
     result = _get(f"{GRAPH_BASE}/{media_id}", {"fields": "permalink", "access_token": access_token})
     return result.get("permalink", "")
@@ -292,7 +330,7 @@ def _truncate_caption(text: str, max_len: int = THREADS_TEXT_MAX_LEN) -> str:
 
 
 def _finish_and_write(threads_user_id, access_token, container_id, out_path, tag):
-    publish_result = publish_container(threads_user_id, access_token, container_id)
+    publish_result = publish_container_with_retry(threads_user_id, access_token, container_id)
     media_id = publish_result.get("id")
     if not media_id:
         raise RuntimeError(f"발행 실패: {publish_result}")
