@@ -42,6 +42,7 @@ import subprocess
 from pathlib import Path
 
 import deepdive_narration
+import desc_format
 import google_tts
 import longform_graphics
 import notify_telegram
@@ -402,7 +403,7 @@ def upload_longform(video_path: Path, title: str, description: str, tags: list[s
         raise RuntimeError(f"채널 불일치! 예상: {upload_youtube.EXPECTED_CHANNEL_TITLE}, 실제: {actual_title}")
 
     body = {
-        "snippet": {"title": title, "description": description, "tags": tags, "categoryId": "22"},
+        "snippet": {"title": title, "description": desc_format.format_description(description), "tags": tags, "categoryId": "22"},
         "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False, "containsSyntheticMedia": True},
     }
     media = MediaFileUpload(str(video_path), chunksize=-1, resumable=True, mimetype="video/mp4")

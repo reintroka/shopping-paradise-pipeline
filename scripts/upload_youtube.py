@@ -5,6 +5,7 @@
 import argparse
 import json
 import os
+import desc_format
 
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -122,7 +123,7 @@ def upload(video_path: str, title: str, description: str, tags: list[str], coupa
     )
 
     body = {
-        "snippet": {"title": title[:100], "description": full_description, "tags": tags, "categoryId": "22"},
+        "snippet": {"title": title[:100], "description": desc_format.format_description(full_description), "tags": tags, "categoryId": "22"},
         "status": {
             "privacyStatus": "public",
             "selfDeclaredMadeForKids": False,
