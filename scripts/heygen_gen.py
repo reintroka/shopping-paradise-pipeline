@@ -38,6 +38,23 @@ CHAR_HISTORY_PATH = REPO_ROOT / "character_image_history.json"
 _TRANSIENT_ERRORS = (URLError, socket.error, http.client.RemoteDisconnected, ConnectionResetError, TimeoutError)
 
 
+# 2026-10-05: 남성 저녁편이 create_video에서 "HTTP Error 404: NOT FOUND"만 남기고 죽음.
+# urllib의 HTTPError는 HeyGen 응답 본문(error.code: asset_not_found/voice_not_found 등)을
+# 버려서 텔레그램 알림만으론 무엇이 404였는지 알 수 없었다 — 본문을 예외 메시지에 담는다.
+class HeyGenHTTPError(Exception):
+    def __init__(self, code, label, body):
+        self.code = code
+        self.body = body
+        super().__init__(f"HeyGen {label} 실패 HTTP {code}: {body}")
+
+
+def _read_error_body(e):
+    try:
+        return e.read().decode("utf-8", errors="replace")[:500]
+    except Exception:
+        return "(응답 본문 읽기 실패)"
+
+
 def _headers(extra=None):
     h = {"x-api-key": os.environ[API_KEY_ENV]}
     if extra:
@@ -51,8 +68,8 @@ def _urlopen_with_retry(build_request, timeout, label, retries=3, wait_sec=5):
         try:
             with urlreq.urlopen(build_request(), timeout=timeout) as resp:
                 return resp.read()
-        except HTTPError:
-            raise
+        except HTTPError as e:
+            raise HeyGenHTTPError(e.code, label, _read_error_body(e)) from None
         except _TRANSIENT_ERRORS as e:
             last_err = e
             print(f"[heygen_gen] {label} 네트워크 오류 (시도 {attempt}/{retries}): {e}")
@@ -108,6 +125,27 @@ def create_video(asset_id: str, script: str, voice_id: str, title: str) -> str:
     }
     result = _post_json("https://api.heygen.com/v3/videos", body)
     return result["data"]["video_id"]
+
+
+def create_video_with_retry(image_path: Path, asset_id: str, script: str, voice_id: str, title: str, retries=3) -> str:
+    """create_video가 404면 잠깐 기다렸다 재시도, 마지막 시도 전엔 이미지를 다시 올린다.
+
+    2026-10-05: 남성 저녁편에서 훅 생성은 받아들여졌는데 바로 이어진 CTA 생성이 404로
+    거절돼 파이프라인 전체가 죽었다. 같은 목소리·같은 요청이 전날과 직전 훅에선 정상이라
+    업로드 직후 에셋이 아직 조회되지 않는 등 HeyGen 쪽 일시 404로 판단 — 404만 재시도하고
+    다른 4xx(잘못된 요청)는 재시도해도 소용없으니 그대로 올린다.
+    """
+    for attempt in range(1, retries + 1):
+        try:
+            return create_video(asset_id, script, voice_id, title)
+        except HeyGenHTTPError as e:
+            if e.code != 404 or attempt == retries:
+                raise
+            print(f"[heygen_gen] {title} 생성 404 (시도 {attempt}/{retries}): {e.body}")
+            time.sleep(10 * attempt)
+            if attempt == retries - 1:
+                asset_id = upload_image(image_path)
+                print(f"[heygen_gen] {title} 이미지 재업로드 후 재시도")
 
 
 def poll_video(video_id: str, max_tries=90, wait_sec=5) -> str:
@@ -197,8 +235,8 @@ def main():
     hook_asset = upload_image(hook_img)
     cta_asset = upload_image(cta_img)
 
-    hook_vid_id = create_video(hook_asset, script_data["hook_speech"], voice_id, "auto-hook")
-    cta_vid_id = create_video(cta_asset, script_data["cta_speech"], voice_id, "auto-cta")
+    hook_vid_id = create_video_with_retry(hook_img, hook_asset, script_data["hook_speech"], voice_id, "auto-hook")
+    cta_vid_id = create_video_with_retry(cta_img, cta_asset, script_data["cta_speech"], voice_id, "auto-cta")
 
     hook_url = poll_video(hook_vid_id)
     download(hook_url, out_dir / "hook.mp4")
