@@ -32,7 +32,7 @@
   9. 유튜브 댓글 홍보 (post_comment, 재시도 포함) — 실패해도 계속 진행
   10. (링크 페이지 업데이트는 2.5번으로 이동함)
   11. shorts_log.json에 이번 발행 기록 추가
-  12. 숏츠가 6개(3일치) 쌓였으면 롱폼으로 이어붙여 별도 업로드 (compile_longform) — 실패해도 계속 진행
+  12. (2026-10-06 중단) 쇼츠 6편 모음 롱폼 — 새 비교형 롱폼(longform_v2.py, 전용 루틴)으로 대체
   13. used_products.json + shorts_log.json(+longform_counter.json) 변경사항 커밋+푸시 (파이프라인 레포 자체)
   14. 텔레그램으로 실행 요약 알림 (2026-08-27 도입, 성공/실패 무관 항상 전송)
 """
@@ -470,7 +470,9 @@ def main():
         pending_after = len([e for e in shorts_log.load_log() if not e.get("compiled_in")])
         return f"대기 중 ({pending_after}/6)"
 
-    soft_step("롱폼 자동 컴파일", _compile_longform_step)
+    # 2026-10-06: 사용자 지시로 '쇼츠 6편 모음' 롱폼 중단 — 같은 종류 6개 가격대별 비교 롱폼
+    # (longform_v2.py, 전용 루틴 shopping-paradise-longform)으로 대체. 함수는 참고용으로 남겨 둔다.
+    # soft_step("롱폼 자동 컴파일", _compile_longform_step)
 
     # 2026-09-18: run_teaser.py가 예약해둔 상품을 이어받아 썼다면(pending_used), 이번
     # 실행으로 소비됐으니 pending_release.json에서 이 character 키를 지운다 — 안
