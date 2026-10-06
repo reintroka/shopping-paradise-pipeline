@@ -25,6 +25,8 @@ import random
 import urllib.request
 from pathlib import Path
 
+import notify_telegram
+import number_guard
 from korean_number import price_to_korean, strip_duplicate_won
 
 # 2026-09-06: 가격을 미리 한글로 변환해서("이십일만사천오백원") 프롬프트에 넘겨도,
@@ -242,6 +244,40 @@ def fill_price_placeholders(data: dict, price: int) -> dict:
     return data
 
 
+def _number_checked(data: dict, prompt: str, product: dict) -> dict:
+    """2026-10-06: 대본(나레이션·HeyGen 멘트·화면 카드·제목·SNS 캡션)에 상품명에 없는
+    '숫자+단위'가 있으면 틀린 조각을 알려 주고 최대 2번 다시 쓰게 한다(number_guard.py 참고 —
+    "46ml부터", "15종이 아닌 8종" 같은 사고). 그래도 남으면 가장 나은 대본으로 진행하고
+    텔레그램으로 알린다(발행 자체는 막지 않음)."""
+    source = (product.get("productName") or "", str(product.get("productPrice") or ""), product.get("keyword") or "")
+    fields = {k: data.get(k) for k in REQUIRED_KEYS}
+    bad = number_guard.unknown_numbers(fields, *source)
+    best, best_bad = data, bad
+    for attempt in range(2):
+        if not best_bad:
+            break
+        print(f"[gen_script] 상품 정보에 없는 숫자 — 재작성 {attempt + 1}/2: {best_bad}")
+        try:
+            cand = parse_json_response(call_gemini(prompt + number_guard.retry_note(best_bad)))
+        except Exception as e:  # noqa: BLE001 — 재작성 실패는 기존 대본으로 진행
+            print(f"[gen_script] 재작성 호출 실패: {e}")
+            continue
+        if any(not cand.get(k) for k in REQUIRED_KEYS):
+            continue
+        cand_bad = number_guard.unknown_numbers({k: cand.get(k) for k in REQUIRED_KEYS}, *source)
+        if len(cand_bad) < len(best_bad):
+            best, best_bad = cand, cand_bad
+    if best_bad:
+        msg = (f"⚠️ [쇼핑의천국] 대본 숫자 검사: 재작성 2회 후에도 상품명에 없는 숫자가 남아 그대로 진행합니다.\n"
+               f"상품: {product.get('productName', '')[:60]}\n" + "\n".join(best_bad[:6]))
+        print(msg)
+        try:
+            notify_telegram.send(msg)
+        except Exception as e:  # noqa: BLE001
+            print(f"[gen_script] 텔레그램 알림 실패: {e}")
+    return best
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--product-json", required=True)
@@ -278,6 +314,7 @@ def main():
         missing = [k for k in REQUIRED_KEYS if not data.get(k)]
     if missing:
         raise RuntimeError(f"Gemini 응답에 필수 필드 누락(재시도 후에도): {missing}")
+    data = _number_checked(data, prompt, product)
     data = fill_price_placeholders(data, product["productPrice"])
     if data.get("x_post"):
         save_x_post_history(history, data["x_post"])  # 고지 문구 붙이기 전 원문으로 이력 저장(중복비교용)

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import google_tts
 import korean_number
+import number_guard
 
 PRICE_TOKEN = "[[PRICE]]"
 
@@ -76,7 +77,7 @@ def _parse_json(text: str) -> dict:
 
 
 def generate_and_synthesize(product_name: str, price: int, specs: list[tuple] | None,
-                             character: str, work_dir: Path, idx: int) -> dict:
+                             character: str, work_dir: Path, idx: int, source_text: str = "") -> dict:
     """Gemini로 딥다이브 코멘트+강조단어 생성 후 Google TTS로 합성.
 
     specs가 없으면(2026-09-01 이전 발행분, shorts_log.json에 스펙이 저장되기 전)
@@ -89,16 +90,22 @@ def generate_and_synthesize(product_name: str, price: int, specs: list[tuple] | 
     )
     narration_spoken = narration_caption = ""
     emphasis_words: list = []
+    # 2026-10-06: 상품 정보에 없는 '숫자+단위'(지어낸 용량·개수 등)도 재시도 사유로 본다
+    # (number_guard.py — 쇼츠에서 "46ml부터", "15종이 아닌 8종" 사고 확인).
+    src = (source_text or product_name, specs_text, str(price))
+    note, num_bad = "", []
     for attempt in range(3):
-        text = _call_gemini(prompt)
+        text = _call_gemini(prompt + note)
         data = _parse_json(text)
         narration_spoken = data["narration_spoken"]
         narration_caption = data["narration_caption"]
         emphasis_words = data.get("emphasis_words", [])
         token_count = narration_spoken.count(PRICE_TOKEN)
-        if token_count == 1:
+        num_bad = number_guard.unknown_numbers({"spoken": narration_spoken, "caption": narration_caption}, *src)
+        if token_count == 1 and not num_bad:
             break
-        print(f"  [경고] 가격 자리표시자가 {token_count}번 등장(정확히 1번이어야 함) — "
+        note = number_guard.retry_note(num_bad) if num_bad else ""
+        print(f"  [경고] 가격 자리표시자 {token_count}번(정확히 1번이어야 함) / 근거 없는 숫자 {num_bad} — "
               f"재시도 {attempt + 1}/3: {narration_spoken[:80]!r}")
     else:
         # 2026-09-05: 3회 재시도에도 가격이 중복 언급되는 경우, 두 번째부터는 그냥
@@ -117,6 +124,15 @@ def generate_and_synthesize(product_name: str, price: int, specs: list[tuple] | 
     if PRICE_TOKEN not in narration_spoken:
         print(f"  [경고] narration_spoken에 {PRICE_TOKEN} 자리표시자가 없습니다 — "
               f"모델이 지침을 어기고 가격을 직접 풀어썼을 수 있습니다: {narration_spoken[:80]!r}")
+    if num_bad:
+        msg = (f"⚠️ [쇼핑의천국] 롱폼 해설 숫자 검사: 3회 재시도 후에도 상품 정보에 없는 숫자가 남아 그대로 진행합니다.\n"
+               f"상품: {product_name[:60]}\n" + "\n".join(num_bad[:6]))
+        print(msg)
+        try:
+            import notify_telegram
+            notify_telegram.send(msg)
+        except Exception as e:  # noqa: BLE001
+            print(f"  [경고] 텔레그램 알림 실패: {e}")
     spoken_price = korean_number.price_to_korean(price)
     narration_spoken = narration_spoken.replace(PRICE_TOKEN, spoken_price)
     # 2026-09-09: spoken_price/price_digits는 항상 "원"으로 끝나는데, 모델이 플레이스홀더

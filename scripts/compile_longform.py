@@ -325,6 +325,7 @@ def build_longform(entries: list, clip_paths: dict, work_dir: Path, vol: int) ->
 
         dd = deepdive_narration.generate_and_synthesize(
             e["product_name"], e["price"], _entry_specs(e), e["character"], work_dir, i,
+            source_text=e.get("product_name_full") or e["product_name"],
         )
         pages = longform_graphics.split_narration_pages(dd["narration"])
         page_durs = longform_graphics.allocate_page_durations(pages, dd["duration"])
