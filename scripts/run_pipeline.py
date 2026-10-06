@@ -64,6 +64,7 @@ import build_graphics  # noqa: E402
 import heygen_gen  # noqa: E402
 import google_tts  # noqa: E402
 import assemble_video  # noqa: E402
+import usage_broll  # noqa: E402
 import upload_youtube  # noqa: E402
 import post_x  # noqa: E402
 import post_instagram  # noqa: E402
@@ -288,11 +289,23 @@ def main():
     # 요청 본문에 직접 실었었음. generate_product_video.py를 같은 업로드→URL참조
     # 방식으로 수정하고([[project_shopping_paradise_seedance_reliability_2026-09-11]]
     # 참고) 재활성화 — 다음 실 발행에서 성공 여부 확인 필요.
+    # 4.8. 사용 장면 영상 (2026-10-06 도입, 사용자 승인 시안 = TSUBAKI 샴푸 쇼츠 재구성본) — 정지
+    # 상품 사진 대신 Pexels 스톡 사용 장면으로 훅·기능 구간을 채운다(usage_broll.py 참고). 준비되면
+    # 화면에 쓰이지 않는 유료 상품 AI영상(Seedance)은 건너뛰어 비용을 아낀다. 실패하면 기존 화면.
+    usage_ready = False
+    try:
+        usage_ready, usage_note = usage_broll.prepare(work_dir, product, script_data)
+        soft_step_results.append(("사용 장면 영상", usage_ready, usage_note))
+    except Exception as e:
+        print(f"[경고] 사용 장면 영상 준비 실패 (기존 화면으로 진행): {e}")
+        soft_step_results.append(("사용 장면 영상", False, str(e)[:300]))
+
     product_video_path = work_dir / "product_video_raw.mp4"
-    soft_step("상품 AI영상 생성", lambda: run_captured([
-        "python3", str(HERE / "generate_product_video.py"),
-        "--image", str(product_image_path), "--out", str(product_video_path),
-    ]))
+    if not usage_ready:
+        soft_step("상품 AI영상 생성", lambda: run_captured([
+            "python3", str(HERE / "generate_product_video.py"),
+            "--image", str(product_image_path), "--out", str(product_video_path),
+        ]))
 
     # 5.5. 스펙 설명 나레이션 3개 (Google Cloud TTS, 스펙 카드 1개당 1개 — 컷 전환과 정확히 동기화하기 위함)
     for i in (1, 2, 3):

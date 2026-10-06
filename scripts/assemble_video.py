@@ -16,6 +16,8 @@ from pathlib import Path
 
 from PIL import Image
 
+import usage_broll
+
 HERE = Path(__file__).resolve().parent
 SFX_DIR = HERE.parent / "assets" / "sfx"
 
@@ -122,7 +124,7 @@ def build_audio_timeline(work_dir: Path, durs, starts, ends) -> Path:
     lines = []
     for i in range(n):
         ms = int(starts[i] * 1000)
-        lines.append(f"[{i}:a]adelay={ms},aformat=channel_layouts=stereo:sample_rates=44100[a{i}];")
+        lines.append(f"[{i}:a]adelay={ms}:all=1,aformat=channel_layouts=stereo:sample_rates=44100[a{i}];")
 
     whoosh_idx = n
     whoosh_labels = []
@@ -411,9 +413,23 @@ def assemble(work_dir: Path, out_path: Path):
     total_dur = ends[-1]
     print(f"[assemble_video] 비트 길이: {[round(d,2) for d in durs]}, 설명구간 {total_dur:.2f}초")
 
-    build_audio_timeline(work_dir, durs, starts, ends)
-    middle_path = build_middle_segment(work_dir, durs, starts, ends, total_dur)
-    hook_path = build_hook_segment(work_dir)
+    audio = build_audio_timeline(work_dir, durs, starts, ends)
+    # 2026-10-06: 사용 장면 영상(usage_broll.prepare가 준비)이 있으면 훅·기능 구간을 그 화면으로
+    # 만든다. 렌더 중 어떤 오류든 나면 기존 화면(정지 상품 사진)으로 다시 만들어 발행은 막지 않는다.
+    info = usage_broll.load(work_dir)
+    middle_path = hook_path = None
+    if info:
+        try:
+            switches = [0.0] + [ends[i] + SWITCH_OFFSET for i in range(len(durs) - 1)] + [total_dur]
+            middle_path = usage_broll.render_middle(work_dir, info, switches, audio)
+            hook_path = usage_broll.render_hook(work_dir, info)
+            print("[assemble_video] 사용 장면 화면으로 훅·기능 구간 완료")
+        except Exception as e:  # noqa: BLE001
+            print(f"[assemble_video] 사용 장면 렌더 실패, 기존 화면으로 폴백: {e}")
+            middle_path = hook_path = None
+    if not middle_path:
+        middle_path = build_middle_segment(work_dir, durs, starts, ends, total_dur)
+        hook_path = build_hook_segment(work_dir)
     cta_path = build_cta_segment(work_dir)
 
     filter_txt = (
