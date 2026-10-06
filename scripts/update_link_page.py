@@ -86,6 +86,42 @@ def add_card(product_name: str, price: str, coupang_url: str, hook_line: str, im
     return rank
 
 
+def add_cards(items: list) -> list:
+    """카드 여러 장을 한 번의 clone/commit/push로 연속 번호로 추가하고 번호 목록을 돌려준다.
+
+    2026-10-06: 새 비교형 롱폼(longform_v2.py)은 상품 6개를 한꺼번에 등록한다. add_card()를
+    6번 부르면 clone/push가 6번 일어나 느리고 동시 실행과 충돌하기 쉬워 묶었다. 이미 쇼츠로
+    등록된 같은 상품도 항상 새 번호로 다시 등록한다(사용자 확정) — 롱폼 6개가 페이지 맨 위에
+    연속 번호로 모이게 하고, 옛 쇼츠 영상에 박힌 옛 번호는 그대로 살려 두기 위함.
+    items: [{"title", "price", "url", "sub", "image"}] (보여 줄 순서대로 — 앞쪽이 작은 번호)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        run(["git", "clone", "--depth", "1", REPO_URL, tmp])
+        index_path = Path(tmp) / "index.html"
+        html = index_path.read_text(encoding="utf-8")
+        if ITEMS_MARKER not in html:
+            raise RuntimeError("index.html에서 삽입 위치(const ITEMS = [)를 찾지 못했습니다.")
+        first = next_rank(html)
+        ranks, block = [], ""
+        for k, it in enumerate(items):
+            rank = first + k
+            fields = [f"rank: {rank}", f"url: {json.dumps(it['url'], ensure_ascii=False)}"]
+            if it.get("image"):
+                fields.append(f"image: {json.dumps(it['image'], ensure_ascii=False)}")
+            fields.append(f"title: {json.dumps(it['title'], ensure_ascii=False)}")
+            fields.append(f"sub: {json.dumps(it['sub'], ensure_ascii=False)}")
+            fields.append(f"price: {json.dumps(it['price'], ensure_ascii=False)}")
+            block += "    { " + ", ".join(fields) + " },\n"
+            ranks.append(rank)
+        index_path.write_text(html.replace(ITEMS_MARKER, ITEMS_MARKER + block, 1), encoding="utf-8")
+        run(["git", "-C", tmp, "add", "index.html"])
+        run(["git", "-C", tmp, "-c", "user.email=bot@shopping-paradise.local",
+             "-c", "user.name=shopping-paradise-bot", "commit", "-m",
+             f"Add {len(items)} product cards ({ranks[0]}~{ranks[-1]}번째 실험, comparison longform)"])
+        push_with_retry(tmp)
+    print(f"[update_link_page] 링크 페이지 {len(items)}장 추가: {ranks[0]}~{ranks[-1]}번")
+    return ranks
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--product-name", required=True)

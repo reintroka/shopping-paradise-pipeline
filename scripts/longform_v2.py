@@ -42,6 +42,7 @@ LEN_LO, LEN_HI = 0.9, 1.15
 MAX_LINE = 68  # 두 줄 자막 한도
 DISCLOSURE = "이 영상은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
 UA = {"User-Agent": "Mozilla/5.0"}
+LINK_PAGE = "https://reintroka.github.io/sidejoblab-links/"
 
 # (주제, 쿠팡 검색어들, 최저가) — 같은 종류를 가격대별로 비교하기 좋은 생활 카테고리 위주.
 TOPICS = [
@@ -480,6 +481,7 @@ def cmd_build(json_file):
     P = prep["products"]
     photo = {p["i"]: WORK / f"p{p['i']}.jpg" for p in P}
     hdr = G.save(G.header(spec["header"]), out / "h.png")
+    ranks = register_link_cards(spec, prep)  # 상품 n(원고 순서) → 링크 페이지 검색번호, 실패 시 전부 None
     plan = []  # (챕터명, key, lines, bg, layers_fn, kw)
 
     it = spec["intro"]
@@ -502,7 +504,7 @@ def cmd_build(json_file):
 
         def pl(st, p=p, n=n, src=src):
             ls = [(hdr, 0.0), (G.save(G.rank_badge(n + 1, N_PRODUCTS), out / f"rk{n}.png"), 0.2),
-                  (G.save(G.product_card(photo[src["i"]], p["short"], src["price"]), out / f"pc{n}.png"), 0.2),
+                  (G.save(G.product_card(photo[src["i"]], p["short"], src["price"], ranks[n]), out / f"pc{n}.png"), 0.2),
                   (G.save(G.title_block(f"추천 {n + 1} · {p['tag']}", p["short"], None, 220, 1000), out / f"pt{n}.png"), 0.2)]
             for b in range(3):
                 ls.append((G.save(G.bullet(b + 1, p["bullets"][b], 440 + b * 90, max_w=950), out / f"pb{n}_{b}.png"), st[min(b + 1, len(st) - 1)]))
@@ -511,7 +513,7 @@ def cmd_build(json_file):
             return ls
         plan.append((f"추천 {n + 1}. {p['short']} ({src['price']:,}원대)", f"p{n}", lines, broll(p.get("broll"), photo[src["i"]]), pl, {}))
     cp = spec["compare"]
-    rows = [(p["short"], P[p["pick"]]["price"], p["tag"], p["who2"]) for p in spec["products"]]
+    rows = [((f"No.{ranks[n]} " if ranks[n] else "") + p["short"], P[p["pick"]]["price"], p["tag"], p["who2"]) for n, p in enumerate(spec["products"])]
     plan.append(("한눈에 비교", "compare", cp["lines"], broll(spec["products"][0].get("broll"), photo[0], 1),
                  lambda st: [(hdr, 0.0), (G.save(G.compare_table(cp["title"], rows), out / "cmp.png"), 0.3)], {"shade": False, "blur": True}))
     si = spec["situations"]
@@ -523,10 +525,12 @@ def cmd_build(json_file):
     plan.append(("오래 쓰는 관리법", "care", ca["lines"], broll(ca.get("broll"), photo[2]),
                  lambda st: [(hdr, 0.0), (G.save(G.title_block("오래 쓰는 관리법", ca["title"], None, 210), out / "care_t.png"), 0.2)]
                  + [(G.save(G.bullet(k + 1, x, 400 + k * 88), out / f"cp{k}.png"), st[min(k + 1, len(st) - 1)]) for k, x in enumerate(ca["items"])], {}))
-    outro = [f"오늘 소개한 {N_PRODUCTS}가지 제품 정보는 설명란과 고정 댓글에 정리해 두었어요.",
+    outro = [f"오늘 소개한 {N_PRODUCTS}가지 제품 정보는 설명란과 고정 댓글에 정리해 두었어요." if not ranks[0] else
+             "제품 링크는 설명란과 고정 댓글, 그리고 링크 페이지에서 화면 속 검색번호로 찾으실 수 있어요.",
              "화면 속 가격은 영상 제작 시점 기준이라, 구매 전에 꼭 다시 확인해 주세요.", spec["outro_question"], DISCLOSURE]
     plan.append(("마무리", "outro", outro, broll(it.get("broll"), photo[3], 1),
-                 lambda st: [(hdr, 0.0), (G.save(G.title_block("구매 전 확인하세요", "링크는 설명란 · 고정 댓글", "가격은 제작 시점 기준 · 바뀔 수 있어요"), out / "out_t.png"), 0.2)], {}))
+                 lambda st: [(hdr, 0.0), (G.save(G.title_block("구매 전 확인하세요", "링크는 설명란 · 고정 댓글",
+                        f"검색번호 No.{ranks[0]}~{ranks[-1]} · 링크 페이지" if ranks[0] else "가격은 제작 시점 기준 · 바뀔 수 있어요"), out / "out_t.png"), 0.2)], {}))
 
     segs, chapters, t = [], [], 0.0
     for idx, (chap, key, lines, bg, layer_fn, kw) in enumerate(plan):
@@ -561,7 +565,10 @@ def cmd_build(json_file):
         thumb = None
 
     chap_txt = "\n".join(f"{int(a // 60)}:{int(a % 60):02d} {c}" for a, c in chapters)
-    links = "\n".join(f"- {p['short']} ({P[p['pick']]['price']:,}원대): {P[p['pick']]['url']}" for p in spec["products"])
+    links = "\n".join(f"- {'No.' + str(ranks[n]) + ' ' if ranks[n] else ''}{p['short']} ({P[p['pick']]['price']:,}원대): {P[p['pick']]['url']}"
+                      for n, p in enumerate(spec["products"]))
+    if ranks[0]:
+        links += f"\n\n🔎 링크 페이지에서 검색번호로도 찾을 수 있어요: {LINK_PAGE}"
     desc = (f"{spec['description_intro']}\n\n[제품 링크]\n{links}\n\n[목차]\n{chap_txt}\n\n"
             f"※ 가격은 영상 제작 시점 기준이며 바뀔 수 있습니다.\n이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n"
             f"이 영상은 AI를 활용해 제작한 콘텐츠입니다.\n\n#{prep['topic'].replace('·', '').replace(' ', '')}추천 #가성비 #살림템 #쇼핑의천국")
@@ -585,6 +592,22 @@ def cmd_build(json_file):
     mins = t / 60
     notify(f"✅ [쇼핑의천국] 새 롱폼 발행: {spec['title']}\n{res['url']}\n{mins:.1f}분 · 상품 {N_PRODUCTS}개 · 주제 {prep['topic']}")
     print(f"DONE {res['url']}")
+
+
+def register_link_cards(spec, prep):
+    """링크 페이지(부업실험실)에 6개를 항상 새 번호로 연속 등록(2026-10-06 사용자 확정).
+    옛 쇼츠 카드와 구분되도록 한 줄 소개에 '주제 6종 비교 · M/D 기준'을 넣는다. 실패하면 번호 없이 진행."""
+    P = prep["products"]
+    d = datetime.fromisoformat(prep["date"])
+    items = [{"title": P[p["pick"]]["name"][:20], "price": f"{P[p['pick']]['price']:,}원대", "url": P[p["pick"]]["url"],
+              "image": P[p["pick"]].get("image", ""),
+              "sub": f"{prep['topic']} {N_PRODUCTS}종 비교 · {d.month}/{d.day} 기준 · {p['whom']}"} for p in spec["products"]]
+    try:
+        import update_link_page
+        return update_link_page.add_cards(items)
+    except Exception as e:  # noqa: BLE001
+        notify(f"⚠️ [쇼핑의천국] 새 롱폼 링크 페이지 등록 실패 — 검색번호 없이 진행합니다: {e}")
+        return [None] * len(items)
 
 
 def _ensure_rembg():

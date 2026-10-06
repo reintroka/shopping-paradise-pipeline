@@ -129,7 +129,7 @@ def rank_badge(n, total):
     return im
 
 
-def product_card(photo: Path, name: str, price: int):
+def product_card(photo: Path, name: str, price: int, rank=None):
     S = 520
     im = new()
     x0, y0 = 1260, 190
@@ -145,6 +145,12 @@ def product_card(photo: Path, name: str, price: int):
     d.rectangle([x0, y0 + S, x0 + S, y0 + S + 40], fill=(*INK, 255))
     d.text((x0 + S / 2, y0 + S + 52), name, font=fit_text(name, "Bold", 30, S - 40), fill=(*CREAM, 255), anchor="mm")
     d.text((x0 + S / 2, y0 + S + 116), f"{price:,}원대", font=F("Black", 50), fill=(*GOLD, 255), anchor="mm")
+    if rank:  # 링크 페이지 검색번호(쇼츠의 'No.xx' 배지와 같은 역할)
+        t = f"검색번호 No.{rank}"
+        f = F("Black", 28)
+        w = f.getlength(t) + 40
+        d.rounded_rectangle([x0 + 20, y0 + 20, x0 + 20 + w, y0 + 70], radius=25, fill=(*INK, 235), outline=(*GOLD, 255), width=3)
+        d.text((x0 + 20 + w / 2, y0 + 45), t, font=f, fill=(*GOLD, 255), anchor="mm")
     return im
 
 
