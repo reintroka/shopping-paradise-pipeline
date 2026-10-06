@@ -17,7 +17,10 @@
 import base64
 import json
 import os
+import re
 import subprocess
+import wave
+from array import array
 from pathlib import Path
 from urllib import request as urlreq
 
@@ -55,26 +58,65 @@ def _ffprobe_duration(path: Path) -> float:
 LOUDNORM_TARGET = "loudnorm=I=-14:TP=-1:LRA=11"
 
 
-def synthesize(text: str, character: str, out_path: Path) -> dict:
-    api_key = os.environ[API_KEY_ENV]
-    voice_name = VOICE_NAMES[character]
+# 2026-10-06: 사용자 피드백 "쉼표하고 마침표 끝나고 호흡을 줘야지". Chirp3-HD는 쉼표에서 거의 안
+# 쉬고 문장 사이도 짧아서, 쉼표·문장 끝마다 끊어 따로 합성한 뒤 무음을 넣어 잇는다. 롱폼
+# 시안(lf2_speech.py)에서 사용자가 확인한 값과 같다(쉼표 뒤 약 0.45초, 문장 끝 약 0.85초).
+RATE = 24000
+COMMA_GAP, SENT_GAP = 0.35, 0.75
+_CHUNK_RE = re.compile(r"(?<=[,.!?…])\s+")
+
+
+def _synth_pcm(text: str, voice_name: str, api_key: str) -> array:
     body = {
         "input": {"text": text},
         "voice": {"languageCode": "ko-KR", "name": voice_name},
-        "audioConfig": {"audioEncoding": "MP3", "speakingRate": 1.0},
+        "audioConfig": {"audioEncoding": "LINEAR16", "sampleRateHertz": RATE, "speakingRate": 1.0},
     }
-    req = urlreq.Request(
-        f"{ENDPOINT}?key={api_key}",
-        data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urlreq.urlopen(req, timeout=30) as resp:
-        result = json.loads(resp.read())
+    last = None
+    for _ in range(3):
+        try:
+            req = urlreq.Request(
+                f"{ENDPOINT}?key={api_key}",
+                data=json.dumps(body).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlreq.urlopen(req, timeout=30) as resp:
+                raw = base64.b64decode(json.loads(resp.read())["audioContent"])
+            break
+        except Exception as e:  # noqa: BLE001 — 일시 오류(503 등)는 재시도
+            last = e
+    else:
+        raise RuntimeError(f"TTS 실패: {last}")
+    a = array("h", raw[44:])
+    # 앞뒤 무음을 잘라 호흡 길이를 정확히 맞추고, 가장자리 10ms 페이드로 '딱' 소리를 막는다
+    idx = [i for i in range(0, len(a), 48) if abs(a[i]) > 350]
+    if idx:
+        a = a[max(0, idx[0] - 720):min(len(a), idx[-1] + 1440)]
+    f = min(240, len(a) // 2)
+    for i in range(f):
+        a[i] = int(a[i] * i / f)
+        a[-1 - i] = int(a[-1 - i] * i / f)
+    return a
 
-    audio_bytes = base64.b64decode(result["audioContent"])
-    raw_path = out_path.with_suffix(".raw.mp3")
-    raw_path.write_bytes(audio_bytes)
+
+def synthesize(text: str, character: str, out_path: Path) -> dict:
+    api_key = os.environ[API_KEY_ENV]
+    voice_name = VOICE_NAMES[character]
+    chunks = [c.strip() for c in _CHUNK_RE.split(text.strip()) if c.strip()]
+    pcm = array("h")
+    for k, c in enumerate(chunks):
+        if k:
+            gap = COMMA_GAP if chunks[k - 1].endswith(",") else SENT_GAP
+            pcm.extend([0] * int(RATE * gap))
+        pcm.extend(_synth_pcm(c, voice_name, api_key))
+
+    raw_path = out_path.with_suffix(".raw.wav")
+    with wave.open(str(raw_path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(RATE)
+        w.writeframes(pcm.tobytes())
     subprocess.run(
         ["ffmpeg", "-y", "-v", "error", "-i", str(raw_path), "-af", LOUDNORM_TARGET, "-ar", "44100", str(out_path)],
         check=True,
