@@ -442,7 +442,7 @@ def main():
     )
     soft_step("유튜브 댓글", lambda: run_captured([
         "python3", str(HERE / "post_comment.py"),
-        "--video-id", video_id, "--text", comment_text,
+        f"--video-id={video_id}", "--text", comment_text,
     ]))
 
     # 10. (2026-09-10: 링크 페이지 업데이트는 2.5번으로 옮김 — 화면 번호 배지/릴스 캡션에

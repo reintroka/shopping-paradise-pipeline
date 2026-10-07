@@ -581,7 +581,7 @@ def cmd_build(json_file):
 
     comment = "이 영상에서 소개한 제품 링크예요 👇\n" + links + "\n\n※ 가격은 시점에 따라 달라질 수 있어요.\n이 댓글은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
     try:
-        subprocess.run(["python3", str(HERE / "post_comment.py"), "--video-id", res["video_id"], "--text", comment], check=True)
+        subprocess.run(["python3", str(HERE / "post_comment.py"), f"--video-id={res['video_id']}", "--text", comment], check=True)
     except Exception as e:  # noqa: BLE001
         print(f"[lf2] 댓글 등록 실패(무시): {e}")
 

@@ -523,7 +523,7 @@ def check_and_compile():
             "\U0001F449 https://reintroka.github.io/sidejoblab-links/"
         )
         subprocess.run(
-            ["python3", str(HERE / "post_comment.py"), "--video-id", result["video_id"], "--text", comment_text],
+            ["python3", str(HERE / "post_comment.py"), f"--video-id={result['video_id']}", "--text", comment_text],
             check=True,
         )
         print("[compile_longform] 유튜브 댓글 등록 완료")
