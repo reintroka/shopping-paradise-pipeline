@@ -36,13 +36,19 @@ INK = (22, 18, 16)
 UA = {"User-Agent": "Mozilla/5.0"}
 INFO_NAME = "usage_broll.json"
 GEMINI_MODEL = "gemini-flash-lite-latest"
+# 썸네일 검수는 더 똑똑한 모델로 (2026-10-07: lite가 안마의자 영상에 믹서기·택배기사·부항 장면을 통과시킴)
+VISION_MODEL = "gemini-flash-latest"
+VISION_MIN_SCORE = 7
 # 영상 제목(slug)에 이런 말이 있으면 썸네일을 보기도 전에 뺀다(Gemini 판정의 1차 안전망).
 BLOCK = re.compile(r"bikini|lingerie|bodysuit|underwear|swimsuit|swimwear|\bbra\b|sexy|nude|naked|topless|shirtless|"
                    r"cigarette|smok|vape|blood|weapon|gun|logo|brand", re.I)
-# 상품 카드·패널·PiP 위치(시안과 같은 배치).
-CLIP_H = 1250
-CARD_Y = 760
-PIP_W, PIP_H, PIP_X, PIP_Y = 340, 604, W - 340 - 56, 1170
+# 상품 카드·패널·PiP 위치. 2026-10-07: 틱톡에서 아래쪽(약 y 1440 이하, 캡션·계정명)과 오른쪽 아이콘 열
+# (x 960 이상)이 가려 기능 설명 패널·아바타 창이 잘림 → 핵심 요소를 y 1420 위, 왼쪽으로 올림.
+CLIP_H = 1100
+CARD_Y = 560
+CARD_S = 440
+PANEL_Y = 1250
+PIP_W, PIP_H, PIP_X, PIP_Y = 270, 480, 70, 1000
 RANK_ANCHOR = (930, 150)
 
 
@@ -56,8 +62,8 @@ def _get(url: str, headers: dict | None = None, timeout: int = 30) -> bytes:
         return resp.read()
 
 
-def _gemini(parts: list) -> str:
-    url = (f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+def _gemini(parts: list, model: str = GEMINI_MODEL) -> str:
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
            f"?key={os.environ['GEMINI_API_KEY']}")
     body = json.dumps({"contents": [{"parts": parts}],
                        "generationConfig": {"responseMimeType": "application/json"}}).encode("utf-8")
@@ -72,6 +78,12 @@ def _gemini(parts: list) -> str:
     raise RuntimeError(f"Gemini 실패: {last}")
 
 
+def _json(text: str):
+    """Gemini가 JSON 뒤에 군말을 붙여도 첫 JSON만 읽는다."""
+    text = text.strip()
+    return json.JSONDecoder().raw_decode(text[text.index("{"):])[0]
+
+
 def _queries(product_name: str, keyword: str, specs: list, hook: str) -> dict:
     prompt = f"""You pick stock-video search queries for a Korean shopping short (vertical video).
 Product: {product_name}
@@ -82,67 +94,94 @@ Feature beats (Korean title / body):
 2. {specs[1][0]} / {specs[1][1]}
 3. {specs[2][0]} / {specs[2][1]}
 
-For the hook and for each beat, give 2 alternative English Pexels search queries (2-4 words each) that find a
-REAL-LIFE USAGE SCENE of this kind of product or the everyday situation it solves (e.g. "washing hair shower",
-"cooking pasta pan", "packing lunch containers"). Rules: no brand names, no celebrities, no text/graphics,
-the product type must match exactly (an air fryer is not a deep fryer). Prefer hands/close-ups over faces.
-Return JSON only: {{"hook": ["", ""], "beats": [["", ""], ["", ""], ["", ""]]}}"""
-    data = json.loads(_gemini([{"text": prompt}]))
-    return {"hook": list(data["hook"])[:2], "beats": [list(b)[:2] for b in data["beats"]][:3]}
+First name the product type in plain English (1-3 words, e.g. "massage chair", "air fryer", "shampoo").
+Then, for the hook and for each beat, give 2 alternative English Pexels search queries (2-4 words each).
+EVERY query MUST contain that product-type noun, and should find footage where the product itself is visible or
+being used (e.g. "woman using massage chair", "air fryer basket fries", "washing hair shampoo foam").
+If a beat is abstract (price, value, installation, delivery, warranty, design, size), do NOT search for that
+concept (no delivery men, laptops, money, shopping) - search for the product in use or in a home instead.
+No brand names, no celebrities, no text/graphics. Prefer hands/close-ups over faces.
+Return JSON only: {{"noun": "", "hook": ["", ""], "beats": [["", ""], ["", ""], ["", ""]]}}"""
+    data = _json(_gemini([{"text": prompt}]))
+    print(f"[usage_broll] 상품 종류: {data.get('noun', '')}")
+    # 검색어가 목록 대신 문자열 하나로 오면 list()가 글자 단위로 쪼개 'l','a','f'로 검색하던 문제(10/7) 방지
+    as_list = lambda x: [x] if isinstance(x, str) else list(x)  # noqa: E731
+    return {"noun": data.get("noun", ""), "hook": as_list(data["hook"])[:2],
+            "beats": [as_list(b)[:2] for b in data["beats"]][:3]}
 
 
 def _pick_file(video: dict) -> str | None:
+    """세로 영상이면 폭 720+, 가로 영상이면 높이 1080+ 파일 중 1080에 가장 가까운 것.
+    (2026-10-07: 세로 영상만 찾으니 안마의자·에어프라이어 같은 상품은 맞는 장면이 거의 없어 가로도 받는다.
+    기능 구간 영상 칸은 1080x1250이라 가로 영상 가운데를 잘라도 충분하다.)"""
     files = [f for f in video.get("video_files", []) if f.get("width") and f.get("height")
-             and f["height"] > f["width"] and f["width"] >= 720 and f.get("file_type") == "video/mp4"]
+             and f.get("file_type") == "video/mp4"
+             and ((f["height"] > f["width"] and f["width"] >= 720) or (f["width"] >= f["height"] >= 1080))]
     if not files:
         return None
-    files.sort(key=lambda f: (abs(f["width"] - 1080), f["width"]))
+    files.sort(key=lambda f: (abs(min(f["width"], f["height"]) - 1080), f["width"]))
     return files[0]["link"]
 
 
 def _candidates(query: str, used: set) -> list:
-    url = "https://api.pexels.com/videos/search?" + urllib.parse.urlencode(
-        {"query": query, "orientation": "portrait", "size": "medium", "per_page": 12})
-    data = json.loads(_get(url, {"Authorization": os.environ["PEXELS_API_KEY"]}))
+    """세로 영상 먼저, 모자라면 가로 영상까지 합쳐 최대 8개."""
     out = []
-    for v in data.get("videos", []):
-        if v["id"] in used or v.get("duration", 0) < 5 or BLOCK.search(v.get("url", "")):
-            continue
-        link = _pick_file(v)
-        if link and v.get("image"):
-            out.append({"id": v["id"], "link": link, "image": v["image"], "url": v["url"], "duration": v["duration"]})
-        if len(out) == 6:
-            break
+    for orientation in ("portrait", "landscape"):
+        url = "https://api.pexels.com/videos/search?" + urllib.parse.urlencode(
+            {"query": query, "orientation": orientation, "size": "medium", "per_page": 12})
+        data = json.loads(_get(url, {"Authorization": os.environ["PEXELS_API_KEY"]}))
+        for v in data.get("videos", []):
+            if v["id"] in used or v.get("duration", 0) < 5 or BLOCK.search(v.get("url", "")):
+                continue
+            if any(c["id"] == v["id"] for c in out):
+                continue
+            link = _pick_file(v)
+            if link and v.get("image"):
+                out.append({"id": v["id"], "link": link, "image": v["image"], "url": v["url"],
+                            "duration": v["duration"]})
+            if len(out) == 8:
+                return out
     return out
 
 
-def _vision_pick(cands: list, scene: str, product_name: str) -> int:
-    """후보 썸네일을 Gemini에게 직접 보여 주고 맞는 장면 하나의 번호(없으면 -1)를 받는다."""
+def _vision_pick(cands: list, scene: str, product_name: str, noun: str = "") -> int:
+    """후보 썸네일을 Gemini에게 직접 보여 주고 맞는 장면 하나의 번호(없으면 -1)를 받는다.
+    2026-10-07: '관련 있어 보이는' 장면(택배기사, 부항, 노트북)까지 통과돼 시청자가 상관없는 영상이라고
+    느낀 문제 → 상품 종류 자체가 화면에 보여야만 통과, 점수 7점 미만은 전부 반려."""
+    kind = noun or product_name
     parts = [{"text": f"""These are {len(cands)} thumbnails (index 0..{len(cands) - 1}) of stock videos for a Korean
-shopping short that sells: {product_name}. Wanted scene: "{scene}".
-Pick the ONE thumbnail that best shows that scene and fits an ad for this exact product type.
-Reject any thumbnail that shows: a clearly different kind of product, a visible brand logo or readable brand name,
-revealing clothing (swimwear, underwear, bodysuit), alcohol or smoking, a child as the main subject, text overlays.
-Return JSON only: {{"pick": <index or -1>, "why": "<short reason>"}}"""}]
+shopping short that sells: {product_name} (product type: {kind}). Wanted scene: "{scene}".
+Score each thumbnail 0-10 for how clearly it shows EITHER a {kind} itself (visible and recognizable) OR the
+exact act of using a {kind} (e.g. shampoo -> hair being lathered/washed; air fryer -> food taken out of an
+air fryer basket; massage chair -> a person sitting in a massage chair). A viewer must instantly connect it to a {kind}.
+Score 0-3 for merely related scenes: a different product or appliance (deep fryer vs air fryer), a manual
+massage by a therapist, a delivery person, a laptop/shopping/money, a generic tired or happy person,
+a blurry or abstract close-up.
+Score 0 for: a visible brand logo or readable brand name, revealing clothing (swimwear, underwear, bodysuit),
+bare torso or bare back (shirtless, shower nudity),
+alcohol or smoking, a child as the main subject, text overlays.
+Return JSON only: {{"scores": [<one integer per thumbnail>], "best": <index>, "why": "<short reason>"}}"""}]
     for c in cands:
         try:
             img = _get(c["image"] + ("&" if "?" in c["image"] else "?") + "auto=compress&w=360")
         except Exception:  # noqa: BLE001 — 썸네일 하나 실패는 빈 칸으로
             img = b""
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(img).decode()}})
-    data = json.loads(_gemini(parts))
-    pick = int(data.get("pick", -1))
-    print(f"[usage_broll] '{scene}' 후보 {len(cands)}개 → {pick} ({data.get('why', '')})")
-    return pick if 0 <= pick < len(cands) else -1
+    data = _json(_gemini(parts, VISION_MODEL))
+    scores = [int(x) for x in data.get("scores", [])][:len(cands)]
+    pick = max(range(len(scores)), key=lambda k: scores[k]) if scores else -1
+    ok = pick >= 0 and scores[pick] >= VISION_MIN_SCORE
+    print(f"[usage_broll] '{scene}' 후보 {len(cands)}개 점수 {scores} → {pick if ok else -1} ({data.get('why', '')})")
+    return pick if ok else -1
 
 
-def _find_clip(queries: list, product_name: str, used: set, out: Path) -> dict | None:
+def _find_clip(queries: list, product_name: str, used: set, out: Path, noun: str = "") -> dict | None:
     for q in queries:
         try:
             cands = _candidates(q, used)
             if not cands:
                 continue
-            k = _vision_pick(cands, q, product_name)
+            k = _vision_pick(cands, q, product_name, noun)
             if k < 0:
                 continue
             c = cands[k]
@@ -169,9 +208,9 @@ def prepare(work_dir: Path, product: dict, script_data: dict) -> tuple[bool, str
     specs = [(script_data[f"spec{i}_title"], script_data[f"spec{i}_body"]) for i in (1, 2, 3)]
     q = _queries(name, product.get("keyword", ""), specs, script_data.get("hook_speech", ""))
     used: set = set()
-    slots = [_find_clip(q["hook"], name, used, work_dir / "broll_hook.mp4")]
+    slots = [_find_clip(q["hook"], name, used, work_dir / "broll_hook.mp4", q["noun"])]
     for i, qs in enumerate(q["beats"]):
-        slots.append(_find_clip(qs, name, used, work_dir / f"broll_{i + 1}.mp4"))
+        slots.append(_find_clip(qs, name, used, work_dir / f"broll_{i + 1}.mp4", q["noun"]))
     found = [s for s in slots if s]
     if len(found) < 2:
         return False, f"맞는 장면 {len(found)}개뿐 — 기존 화면"
@@ -206,7 +245,7 @@ def _fit(text: str, weight: str, size: int, max_w: int, min_size: int = 30) -> I
     return f
 
 
-def _hook_text_png(lines: list, path: Path, y0: int = 700) -> None:
+def _hook_text_png(lines: list, path: Path, y0: int = 640) -> None:
     """훅 큰 문구: 흰 글자+짙은 외곽선, 둘째 줄은 금색. 문구 뒤로 어두운 띠."""
     im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     band = Image.new("L", (1, H))
@@ -247,7 +286,7 @@ def _pip_assets(work_dir: Path) -> None:
 
 
 def _product_card_png(photo: Path, name: str, price: str, path: Path) -> None:
-    S, pad = 560, 40
+    S, pad = CARD_S, 40
     im = Image.new("RGBA", (S + pad * 2, S + 150 + pad * 2), (0, 0, 0, 0))
     sh = Image.new("RGBA", im.size, (0, 0, 0, 0))
     ImageDraw.Draw(sh).rounded_rectangle([pad, pad + 18, pad + S, pad + S + 168], radius=40, fill=(0, 0, 0, 150))
@@ -259,8 +298,8 @@ def _product_card_png(photo: Path, name: str, price: str, path: Path) -> None:
     im.paste(ph, (pad + (S - ph.width) // 2, pad + 30 + (S - 60 - ph.height) // 2))
     d.rounded_rectangle([pad, pad + S, pad + S, pad + S + 150], radius=40, fill=(*INK, 255))
     d.rectangle([pad, pad + S, pad + S, pad + S + 40], fill=(*INK, 255))
-    f = _font("Bold", 32)
-    while f.getlength(name) > S - 60 and len(name) > 4:
+    f = _fit(name, "Bold", 32, S - 50, 24)  # 카드가 작아져(10/7) 글자를 자르기 전에 먼저 줄인다
+    while f.getlength(name) > S - 50 and len(name) > 4:
         name = name[:-1]
     d.text((pad + S / 2, pad + S + 48), name, font=f, fill=(*CREAM, 255), anchor="mm")
     d.text((pad + S / 2, pad + S + 104), price, font=_font("Black", 44), fill=(*GOLD, 255), anchor="mm")
@@ -271,15 +310,17 @@ def _beat_panel_png(i: int, title: str, body: str, path: Path) -> None:
     im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     g = Image.new("L", (1, H))
     for y in range(H):
-        g.putpixel((0, y), 0 if y < 900 else int(255 * min(1.0, (y - 900) / 260)))
+        g.putpixel((0, y), 0 if y < CLIP_H - 280 else int(255 * min(1.0, (y - CLIP_H + 280) / 260)))
     bg = Image.new("RGBA", (W, H), (*INK, 255))
     bg.putalpha(g.resize((W, H)))
     im.alpha_composite(bg)
     d = ImageDraw.Draw(im)
-    d.ellipse([90, 1590, 210, 1710], fill=(*GOLD, 255))
-    d.text((150, 1648), f"{i + 1:02d}", font=_font("Black", 54), fill=(*INK, 255), anchor="mm")
-    d.text((240, 1618), title, font=_fit(title, "Black", 82, W - 300, 44), fill=(*CREAM, 255), anchor="lm")
-    d.text((242, 1700), body, font=_fit(body, "SemiBold", 44, W - 300, 28), fill=(225, 214, 196, 255), anchor="lm")
+    y = PANEL_Y
+    d.ellipse([90, y, 210, y + 120], fill=(*GOLD, 255))
+    d.text((150, y + 58), f"{i + 1:02d}", font=_font("Black", 54), fill=(*INK, 255), anchor="mm")
+    # 오른쪽 아이콘 열(x 960~)에 닿지 않게 폭 제한
+    d.text((240, y + 28), title, font=_fit(title, "Black", 82, 960 - 240, 44), fill=(*CREAM, 255), anchor="lm")
+    d.text((242, y + 110), body, font=_fit(body, "SemiBold", 44, 960 - 242, 28), fill=(225, 214, 196, 255), anchor="lm")
     im.save(path)
 
 
