@@ -5,11 +5,13 @@
 import argparse
 import json
 import os
+import time
 import desc_format
 
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 SCOPES = [
@@ -99,6 +101,46 @@ def get_credentials():
     return creds
 
 
+# 2026-10-08: 업로드 중 "HttpError 410 Gone"으로 쇼츠가 통째로 미발행됨 — 유튜브 쪽
+# 재개형(resumable) 업로드 세션이 만료/소실된 경우다. 410/404는 그 세션을 더 이어갈 수
+# 없으니 insert 요청을 새로 만들어 처음부터 다시 올리고, 5xx는 같은 세션에서
+# next_chunk를 다시 부른다(구글 권장 방식). 410 시점엔 영상이 아직 생성되지 않으므로
+# 처음부터 재업로드해도 중복 발행은 생기지 않는다.
+_SESSION_GONE = {404, 410}
+_RETRYABLE = {500, 502, 503, 504}
+
+
+def resumable_insert(youtube, body: dict, video_path: str, max_attempts: int = 4) -> dict:
+    def new_request():
+        media = MediaFileUpload(str(video_path), chunksize=-1, resumable=True, mimetype="video/mp4")
+        return youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+
+    request = new_request()
+    response = None
+    attempt = 0
+    while response is None:
+        try:
+            status, response = request.next_chunk()
+            if status:
+                print(f"업로드 중... {int(status.progress() * 100)}%")
+        except HttpError as exc:
+            code = exc.resp.status
+            if code not in _SESSION_GONE and code not in _RETRYABLE:
+                raise
+            attempt += 1
+            if attempt >= max_attempts:
+                raise
+            wait = 10 * attempt
+            if code in _SESSION_GONE:
+                print(f"[업로드] HTTP {code} — 업로드 세션 소실, {wait}초 후 처음부터 재시도 ({attempt}/{max_attempts - 1})")
+                time.sleep(wait)
+                request = new_request()
+            else:
+                print(f"[업로드] HTTP {code} — {wait}초 후 이어서 재시도 ({attempt}/{max_attempts - 1})")
+                time.sleep(wait)
+    return response
+
+
 def upload(video_path: str, title: str, description: str, tags: list[str], coupang_url: str,
            rank: int | None = None) -> str:
     creds = get_credentials()
@@ -130,13 +172,7 @@ def upload(video_path: str, title: str, description: str, tags: list[str], coupa
             "containsSyntheticMedia": True,
         },
     }
-    media = MediaFileUpload(video_path, chunksize=-1, resumable=True, mimetype="video/mp4")
-    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
-    response = None
-    while response is None:
-        status, response = request.next_chunk()
-        if status:
-            print(f"업로드 중... {int(status.progress() * 100)}%")
+    response = resumable_insert(youtube, body, video_path)
 
     video_id = response["id"]
     print(f"업로드 완료 (public): https://youtu.be/{video_id}")

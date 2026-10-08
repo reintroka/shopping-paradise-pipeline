@@ -407,13 +407,7 @@ def upload_longform(video_path: Path, title: str, description: str, tags: list[s
         "snippet": {"title": title, "description": desc_format.format_description(description), "tags": tags, "categoryId": "22"},
         "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False, "containsSyntheticMedia": True},
     }
-    media = MediaFileUpload(str(video_path), chunksize=-1, resumable=True, mimetype="video/mp4")
-    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
-    response = None
-    while response is None:
-        status, response = request.next_chunk()
-        if status:
-            print(f"업로드 중... {int(status.progress() * 100)}%")
+    response = upload_youtube.resumable_insert(youtube, body, video_path)
     video_id = response["id"]
 
     # 기존엔 썸네일 설정 코드가 아예 없어서 유튜브가 영상에서 자동 선택한 프레임이
