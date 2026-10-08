@@ -30,6 +30,7 @@ sys.path.insert(0, str(HERE))
 import lf2_graphics as G  # noqa: E402
 import lf2_speech as S  # noqa: E402
 import number_guard  # noqa: E402
+import rerun_cache  # noqa: E402  2026-10-08: 같은 날 재실행 시 상품 선정·원고·TTS 재사용
 
 REPO_ROOT = HERE.parent
 WORK = REPO_ROOT / "work" / "lf2"
@@ -157,6 +158,50 @@ def _download(url, out):
     return False
 
 
+# 2026-10-08: 같은 날 재실행 캐시. 클라우드 샌드박스는 실행이 끝나면 work/가 통째로 사라져, 막판(업로드 등)에
+# 실패해 다시 돌리면 prepare가 주제·상품을 새로 뽑고 → 에이전트가 새 원고를 쓰고 → 약 4천 자 TTS를 또 돈 내고
+# 합성했다(사용자 지시: "재발행시 돈 안 들게"). 오늘 고른 상품(prepared.json+사진)과 check를 통과한 원고를 GCS에
+# 저장해 두고 재실행 때 그대로 되살린다 — 글이 같으니 문장별 TTS도 lf2_speech의 해시 캐시에서 받아만 온다.
+def _rc_prep_key(date):
+    return f"lf2/{date}/prepared"
+
+
+def _rc_spec_key(prep):
+    ident = rerun_cache.sha({"date": prep["date"], "topic": prep["topic"], "ids": [p["productId"] for p in prep["products"]]})[:16]
+    return f"lf2/{prep['date']}/spec_{ident}.json"
+
+
+def _rc_restore_prep(date, prep_path):
+    data = rerun_cache.get_bytes(f"{_rc_prep_key(date)}/prepared.json")
+    if not data:
+        return False
+    try:
+        prep = json.loads(data.decode("utf-8"))
+        for p in prep["products"]:
+            img = rerun_cache.get_bytes(f"{_rc_prep_key(date)}/p{p['i']}.jpg")
+            if img:
+                (WORK / f"p{p['i']}.jpg").write_bytes(img)
+            elif not _download(p["image"], WORK / f"p{p['i']}.img"):  # 사진만 없으면 무료 재다운로드
+                print(f"[경고] 재실행 캐시: 상품 사진 복원 실패 — 새로 고릅니다: {p['name']}")
+                return False
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 재실행 캐시 복원 실패 — 새로 고릅니다: {e}")
+        return False
+    prep_path.write_text(json.dumps(prep, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[재실행 캐시] 오늘({date}) 이미 고른 주제·상품 6개를 그대로 재사용합니다: {prep['topic']}")
+    return True
+
+
+def _rc_store_prep(prep, prep_path):
+    key = _rc_prep_key(prep["date"])
+    for p in prep["products"]:
+        photo = WORK / f"p{p['i']}.jpg"
+        if photo.exists():
+            rerun_cache.put_bytes(f"{key}/p{p['i']}.jpg", photo.read_bytes(), "image/jpeg")
+    # prepared.json은 마지막에 — 이게 있으면 사진도 다 올라간 것
+    rerun_cache.put_bytes(f"{key}/prepared.json", prep_path.read_bytes(), "application/json")
+
+
 def cmd_prepare(force=False):
     st = load_state()
     today = now_kst().date()
@@ -166,6 +211,8 @@ def cmd_prepare(force=False):
         return
     WORK.mkdir(parents=True, exist_ok=True)
     prep_path = WORK / "prepared.json"
+    if not prep_path.exists():
+        _rc_restore_prep(today.isoformat(), prep_path)  # 2026-10-08 재실행 캐시(위 설명)
     if prep_path.exists():
         prep = json.loads(prep_path.read_text(encoding="utf-8"))
         if prep.get("date") == today.isoformat():
@@ -187,6 +234,7 @@ def cmd_prepare(force=False):
         if not _download(p["image"], WORK / f"p{p['i']}.img"):
             raise RuntimeError(f"상품 사진 다운로드 실패: {p['name']}")
     prep_path.write_text(json.dumps(prep, ensure_ascii=False, indent=2), encoding="utf-8")
+    _rc_store_prep(prep, prep_path)  # 2026-10-08 재실행 캐시
     print(brief(prep))
 
 
@@ -371,19 +419,37 @@ def validate(spec, prep):
 
 
 def _load(json_file):
+    """반환: (spec, prep, 재실행캐시에서_되살렸는지)."""
     spec = json.loads(Path(json_file).read_text(encoding="utf-8"))
     prep = json.loads((WORK / "prepared.json").read_text(encoding="utf-8"))
-    return spec, prep
+    # 2026-10-08: 오늘 같은 상품 구성으로 이미 check를 통과한 원고가 있으면 그걸 쓴다(새 제출은 무시) —
+    # 글이 같아야 TTS 해시 캐시가 맞아 재발행 비용이 0이 된다(cmd_prepare 위 설명 참고).
+    saved = rerun_cache.get_bytes(_rc_spec_key(prep))
+    if saved:
+        try:
+            spec = json.loads(saved.decode("utf-8"))
+            print("[재실행 캐시] 오늘 이미 통과한 원고를 그대로 재사용합니다 — 이번에 새로 제출한 원고는 무시됩니다"
+                  "(같은 글로 TTS를 다시 쓰기 위해 — 비용 0). 다음 단계로 진행하세요.")
+            return spec, prep, True
+        except Exception as e:  # noqa: BLE001
+            print(f"[경고] 재실행 캐시 원고가 깨져 있어 새 제출을 씁니다: {e}")
+    return spec, prep, False
+
+
+def _rc_store_spec(spec, prep):
+    rerun_cache.put_bytes(_rc_spec_key(prep), json.dumps(spec, ensure_ascii=False).encode("utf-8"), "application/json")
 
 
 def cmd_check(json_file):
-    spec, prep = _load(json_file)
+    spec, prep, restored = _load(json_file)
     errs, total = validate(spec, prep)
     if errs:
         print(f"반려 {len(errs)}건 (분량 {total}자):")
         for e in errs:
             print(" -", e)
         sys.exit(1)
+    if not restored:
+        _rc_store_spec(spec, prep)  # 2026-10-08 재실행 캐시: 통과한 원고 저장
     print(f"OK ({total}자)")
 
 
@@ -471,11 +537,13 @@ def _frame(path, t, out):
 
 
 def cmd_build(json_file):
-    spec, prep = _load(json_file)
+    spec, prep, restored = _load(json_file)
     errs, total = validate(spec, prep)
     if errs:
         print("check 반려 상태라 build하지 않습니다:", *errs, sep="\n - ")
         sys.exit(1)
+    if not restored:
+        _rc_store_spec(spec, prep)  # 2026-10-08 재실행 캐시(check를 건너뛰고 바로 build한 경우 대비)
     out = WORK / "out"
     out.mkdir(parents=True, exist_ok=True)
     P = prep["products"]

@@ -85,6 +85,34 @@ def _synth_pcm(text: str) -> array:
 
 
 def synth_line(caption_text: str, out: Path) -> float:
+    """자막 문장 하나를 읽어 wav로 저장하고 길이(초)를 돌려준다(실제 합성은 _synth_line_uncached).
+
+    2026-10-08: 비교형 롱폼이 업로드 등 막판에 실패해 같은 날 다시 돌리면, 클라우드 샌드박스라
+    work/가 사라져 약 4천 자를 Google TTS로 또 돈 내고 합성했다(사용자 지시: "재발행시 돈 안 들게").
+    실제로 읽는 글(숫자 읽기 변환 후)+목소리+이 모듈 코드의 해시를 키로 wav를 GCS에 저장해 두고,
+    같으면 받아만 온다(rerun_cache.get_bytes/put_bytes). 캐시 오류는 경고만 하고 그냥 합성한다."""
+    try:
+        import rerun_cache
+    except Exception:  # noqa: BLE001 - 캐시 모듈이 없으면 그냥 합성
+        return _synth_line_uncached(caption_text, out)
+    key = "lf2_tts/" + rerun_cache.sha({
+        "voice": VOICE, "rate": RATE, "comma_gap": COMMA_GAP, "text": caption_text,
+        "speak": read_numbers(caption_text),
+        "code": rerun_cache.sha(Path(__file__).read_bytes().decode("utf-8", "replace")),  # 이 모듈이 고쳐지면 옛 캐시 무시
+    }) + ".wav"
+    data = rerun_cache.get_bytes(key)
+    if data:
+        out.write_bytes(data)
+        with wave.open(str(out), "rb") as w:
+            frames = w.getnframes()
+        print(f"[재실행 캐시] TTS 재사용(합성 생략): {caption_text[:24]}")
+        return frames / RATE
+    dur = _synth_line_uncached(caption_text, out)
+    rerun_cache.put_bytes(key, out.read_bytes(), "audio/wav")
+    return dur
+
+
+def _synth_line_uncached(caption_text: str, out: Path) -> float:
     """자막 문장 하나를 읽어 wav로 저장하고 길이(초)를 돌려준다. 쉼표마다 끊어 COMMA_GAP을 넣는다."""
     chunks = [c.strip() for c in re.split(r"(?<=,)\s+", read_numbers(caption_text)) if c.strip()]
     pcm = array("h")
