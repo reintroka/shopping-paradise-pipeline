@@ -111,6 +111,11 @@ def get_credentials():
 #   - 5xx/연결 오류: 서버에 받은 위치를 물어보고 거기서부터 이어서
 #   - 404/410: 세션 소실 → 새 세션으로 처음부터 (이 시점엔 영상이 아직 없어 중복 발행 없음)
 #   - 401: 토큰 갱신 후 재시도
+# 2026-10-08 저녁: 남자 쇼츠가 410을 4번 연속 받은 뒤, 새 세션을 열다 401로 끝났다.
+# 세션 열기는 갱신 플래그를 무시하고 있었고, 재시도도 4번뿐이었다. 그래서
+#   - 세션 열기에도 갱신 플래그를 적용하고, 세션이 사라지면(404/410) 토큰도 새로 받는다
+#   - 재시도를 7번으로 늘리고 대기는 최대 60초
+#   - 그래도 실패하면 예전 googleapiclient 경로로 한 번 더 올린다(다른 13개 채널이 쓰는 방식)
 _UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status"
 _CHUNK = 16 * 1024 * 1024  # 256KB의 배수여야 함
 _SESSION_GONE = {404, 410}
@@ -129,9 +134,9 @@ def _auth(creds, force_refresh: bool = False) -> dict:
     return {"Authorization": f"Bearer {creds.token}"}
 
 
-def _start_session(creds, body: dict, size: int) -> str:
+def _start_session(creds, body: dict, size: int, force_refresh: bool = False) -> str:
     r = requests.post(_UPLOAD_URL, timeout=60, data=json.dumps(body).encode("utf-8"), headers={
-        **_auth(creds),
+        **_auth(creds, force_refresh),
         "Content-Type": "application/json; charset=UTF-8",
         "X-Upload-Content-Type": "video/mp4",
         "X-Upload-Content-Length": str(size),
@@ -157,7 +162,24 @@ def _query_offset(creds, session_url: str, size: int):
     raise UploadError(r.status_code, r.text)
 
 
-def resumable_insert(creds, body: dict, video_path: str, max_attempts: int = 5) -> dict:
+def resumable_insert(creds, body: dict, video_path: str, max_attempts: int = 8) -> dict:
+    try:
+        return _requests_insert(creds, body, video_path, max_attempts)
+    except (UploadError, requests.ConnectionError, requests.Timeout) as exc:
+        print(f"[업로드] 직접 업로드 실패({exc}) — googleapiclient 경로로 한 번 더 시도")
+    creds.refresh(Request())
+    youtube = build("youtube", "v3", credentials=creds)
+    media = MediaFileUpload(str(video_path), chunksize=-1, resumable=True, mimetype="video/mp4")
+    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+    response = None
+    while response is None:
+        status, response = request.next_chunk()
+        if status:
+            print(f"업로드 중... {int(status.progress() * 100)}%")
+    return response
+
+
+def _requests_insert(creds, body: dict, video_path: str, max_attempts: int) -> dict:
     size = os.path.getsize(video_path)
     session_url = None
     offset = 0
@@ -167,7 +189,8 @@ def resumable_insert(creds, body: dict, video_path: str, max_attempts: int = 5) 
         while True:
             try:
                 if session_url is None:
-                    session_url = _start_session(creds, body, size)
+                    session_url = _start_session(creds, body, size, force_refresh)
+                    force_refresh = False
                     offset = 0
                 f.seek(offset)
                 chunk = f.read(_CHUNK)
@@ -193,11 +216,12 @@ def resumable_insert(creds, body: dict, video_path: str, max_attempts: int = 5) 
                 attempt += 1
                 if attempt >= max_attempts:
                     raise
-                wait = 10 * attempt
+                wait = min(10 * attempt, 60)
                 print(f"[업로드] {exc} — {wait}초 후 재시도 ({attempt}/{max_attempts - 1})")
                 time.sleep(wait)
                 if code in _SESSION_GONE:
                     session_url = None  # 처음부터 새 세션
+                    force_refresh = True
                     continue
                 if code == 401:
                     force_refresh = True
