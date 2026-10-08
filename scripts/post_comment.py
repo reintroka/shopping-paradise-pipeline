@@ -10,6 +10,8 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
+from upload_youtube import execute_401_retry  # 2026-10-08: 이 환경의 간헐적 401 재시도
+
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.readonly",
@@ -32,14 +34,14 @@ def get_youtube():
 
 
 def is_public(youtube, video_id):
-    resp = youtube.videos().list(part="status", id=video_id).execute()
+    resp = execute_401_retry(lambda: youtube.videos().list(part="status", id=video_id), "공개 확인")
     items = resp.get("items", [])
     return bool(items) and items[0]["status"]["privacyStatus"] == "public"
 
 
 def post_comment(youtube, video_id, text):
     body = {"snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": text}}}}
-    resp = youtube.commentThreads().insert(part="snippet", body=body).execute()
+    resp = execute_401_retry(lambda: youtube.commentThreads().insert(part="snippet", body=body), "댓글")
     return resp["id"]
 
 

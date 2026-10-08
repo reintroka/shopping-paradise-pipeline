@@ -398,7 +398,7 @@ def upload_longform(video_path: Path, title: str, description: str, tags: list[s
     from googleapiclient.http import MediaFileUpload
 
     youtube = build("youtube", "v3", credentials=creds)
-    channel_resp = youtube.channels().list(part="snippet", mine=True).execute()
+    channel_resp = upload_youtube.execute_401_retry(lambda: youtube.channels().list(part="snippet", mine=True), "채널 확인")
     actual_title = channel_resp["items"][0]["snippet"]["title"]
     if actual_title != upload_youtube.EXPECTED_CHANNEL_TITLE:
         raise RuntimeError(f"채널 불일치! 예상: {upload_youtube.EXPECTED_CHANNEL_TITLE}, 실제: {actual_title}")

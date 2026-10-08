@@ -162,7 +162,27 @@ def _query_offset(creds, session_url: str, size: int):
     raise UploadError(r.status_code, r.text)
 
 
-def resumable_insert(creds, body: dict, video_path: str, max_attempts: int = 8) -> dict:
+# 2026-10-08 밤 진단: 이 클라우드 환경에서 같은 토큰으로 channels.list를 24번 부르면 10번 200,
+# 14번 401이 섞여 나왔다(토큰 발급은 6/6 성공). 토큰이 실제로 무효라면 계속 401이어야 하니
+# 요청마다 들쭉날쭉한 것 — 짧게 기다렸다 다시 부르면 대개 통과한다. 그래서 401은 몇 초 뒤
+# 여러 번 재시도한다(401이면 서버가 요청을 처리하지 않은 것이라 insert도 중복 위험 없음).
+_AUTH_RETRIES = 12
+
+
+def execute_401_retry(make_request, what: str = "YouTube API"):
+    """make_request()로 만든 요청을 execute()하되, 401이면 3초 뒤 다시 만든다."""
+    from googleapiclient.errors import HttpError
+    for i in range(_AUTH_RETRIES):
+        try:
+            return make_request().execute()
+        except HttpError as exc:
+            if exc.resp.status != 401 or i == _AUTH_RETRIES - 1:
+                raise
+            print(f"[{what}] 401 — 3초 후 재시도 ({i + 1}/{_AUTH_RETRIES - 1})")
+            time.sleep(3)
+
+
+def resumable_insert(creds, body: dict, video_path: str, max_attempts: int = 20) -> dict:
     try:
         return _requests_insert(creds, body, video_path, max_attempts)
     except (UploadError, requests.ConnectionError, requests.Timeout) as exc:
@@ -172,8 +192,18 @@ def resumable_insert(creds, body: dict, video_path: str, max_attempts: int = 8) 
     media = MediaFileUpload(str(video_path), chunksize=-1, resumable=True, mimetype="video/mp4")
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
     response = None
+    from googleapiclient.errors import HttpError
+    fails = 0
     while response is None:
-        status, response = request.next_chunk()
+        try:
+            status, response = request.next_chunk()
+        except HttpError as exc:
+            fails += 1
+            if exc.resp.status not in (401, 500, 502, 503, 504) or fails >= _AUTH_RETRIES:
+                raise
+            print(f"[업로드-폴백] HTTP {exc.resp.status} — 3초 후 재시도 ({fails})")
+            time.sleep(3)
+            continue
         if status:
             print(f"업로드 중... {int(status.progress() * 100)}%")
     return response
@@ -216,7 +246,7 @@ def _requests_insert(creds, body: dict, video_path: str, max_attempts: int) -> d
                 attempt += 1
                 if attempt >= max_attempts:
                     raise
-                wait = min(10 * attempt, 60)
+                wait = 3 if code == 401 else min(10 * attempt, 60)
                 print(f"[업로드] {exc} — {wait}초 후 재시도 ({attempt}/{max_attempts - 1})")
                 time.sleep(wait)
                 if code in _SESSION_GONE:
@@ -242,7 +272,7 @@ def upload(video_path: str, title: str, description: str, tags: list[str], coupa
     creds = get_credentials()
     youtube = build("youtube", "v3", credentials=creds)
 
-    channel_resp = youtube.channels().list(part="snippet", mine=True).execute()
+    channel_resp = execute_401_retry(lambda: youtube.channels().list(part="snippet", mine=True), "채널 확인")
     actual_title = channel_resp["items"][0]["snippet"]["title"]
     if actual_title != EXPECTED_CHANNEL_TITLE:
         raise RuntimeError(f"채널 불일치! 예상: {EXPECTED_CHANNEL_TITLE}, 실제: {actual_title}. 업로드 중단.")
