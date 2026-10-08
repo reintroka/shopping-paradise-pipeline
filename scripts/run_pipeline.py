@@ -74,6 +74,7 @@ import update_link_page  # noqa: E402
 import shorts_log  # noqa: E402
 import compile_longform  # noqa: E402
 import notify_telegram  # noqa: E402
+import rerun_cache  # noqa: E402
 
 
 def run(cmd, **kw):
@@ -266,14 +267,18 @@ def main():
     # 영상(클립당 약 $0.164)이 매번 헛되이 버려졌다 — HeyGen을 먼저 시도해 실패하면
     # 유료 단계 진입 전에 바로 중단되게 함. 두 단계는 서로 독립적(assemble 단계에서
     # 합쳐짐)이라 순서를 바꿔도 안전하다.
+    # 2026-10-08: 같은 날 같은 상품 재실행이면 이미 만든 영상을 재사용(rerun_cache.py 참고).
+    cache_key = (datetime.now(KST).strftime("%Y-%m-%d"), args.character, product.get("productId"))
     char_dir = REPO_ROOT / "assets" / "characters" / args.character
-    run_captured([
-        "python3", str(HERE / "heygen_gen.py"),
-        "--character", args.character,
-        "--char-dir", str(char_dir),
-        "--script-json", str(script_path),
-        "--out-dir", str(work_dir),
-    ])
+    if not rerun_cache.fetch(*cache_key, work_dir, ["hook.mp4", "cta.mp4"]):
+        run_captured([
+            "python3", str(HERE / "heygen_gen.py"),
+            "--character", args.character,
+            "--char-dir", str(char_dir),
+            "--script-json", str(script_path),
+            "--out-dir", str(work_dir),
+        ])
+        rerun_cache.store(*cache_key, work_dir, ["hook.mp4", "cta.mp4"])
 
     # 5. 상품 AI영상 생성 (부가, 비용 발생 지점, 2026-09-11 도입) — 정지사진 대신
     # Seedance 2-mini로 실제 회전하는 4초 클립을 만들어 반응률을 높이려는 시도(사용자
@@ -301,11 +306,13 @@ def main():
         soft_step_results.append(("사용 장면 영상", False, str(e)[:300]))
 
     product_video_path = work_dir / "product_video_raw.mp4"
-    if not usage_ready:
+    if not usage_ready and not rerun_cache.fetch(*cache_key, work_dir, ["product_video_raw.mp4"]):
         soft_step("상품 AI영상 생성", lambda: run_captured([
             "python3", str(HERE / "generate_product_video.py"),
             "--image", str(product_image_path), "--out", str(product_video_path),
         ]))
+        if product_video_path.exists():
+            rerun_cache.store(*cache_key, work_dir, ["product_video_raw.mp4"])
 
     # 5.5. 스펙 설명 나레이션 3개 (Google Cloud TTS, 스펙 카드 1개당 1개 — 컷 전환과 정확히 동기화하기 위함)
     for i in (1, 2, 3):
