@@ -7,11 +7,11 @@ import json
 import os
 import time
 import desc_format
+import requests
 
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 SCOPES = [
@@ -101,44 +101,116 @@ def get_credentials():
     return creds
 
 
-# 2026-10-08: 업로드 중 "HttpError 410 Gone"으로 쇼츠가 통째로 미발행됨 — 유튜브 쪽
-# 재개형(resumable) 업로드 세션이 만료/소실된 경우다. 410/404는 그 세션을 더 이어갈 수
-# 없으니 insert 요청을 새로 만들어 처음부터 다시 올리고, 5xx는 같은 세션에서
-# next_chunk를 다시 부른다(구글 권장 방식). 410 시점엔 영상이 아직 생성되지 않으므로
-# 처음부터 재업로드해도 중복 발행은 생기지 않는다.
+# 2026-10-08: 업로드 도중 "HttpError 410 Gone"으로 쇼츠가 통째로 미발행됨, 재실행에서는
+# 같은 단계가 401 Invalid Credentials로 실패. 진단해보니 계정/토큰은 정상이었다(tokeninfo
+# 스코프 4종, channels.list OK, requests로 직접 연 재개형 업로드 세션은 200). 실패한 건
+# googleapiclient(httplib2) 업로드 경로였고, 그날 클라우드 환경의 pip이 다른 파이썬
+# 버전으로 설치되면서 라이브러리 조합이 꼬여 있었다. 그래서 영상 업로드만은 검증된
+# requests 경로로 직접 한다(YouTube 재개형 업로드 프로토콜 그대로).
+#   - 16MB 단위로 PUT, 308이면 Range 헤더로 이어갈 위치를 받는다
+#   - 5xx/연결 오류: 서버에 받은 위치를 물어보고 거기서부터 이어서
+#   - 404/410: 세션 소실 → 새 세션으로 처음부터 (이 시점엔 영상이 아직 없어 중복 발행 없음)
+#   - 401: 토큰 갱신 후 재시도
+_UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status"
+_CHUNK = 16 * 1024 * 1024  # 256KB의 배수여야 함
 _SESSION_GONE = {404, 410}
 _RETRYABLE = {500, 502, 503, 504}
 
 
-def resumable_insert(youtube, body: dict, video_path: str, max_attempts: int = 4) -> dict:
-    def new_request():
-        media = MediaFileUpload(str(video_path), chunksize=-1, resumable=True, mimetype="video/mp4")
-        return youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+class UploadError(RuntimeError):
+    def __init__(self, status: int, text: str):
+        super().__init__(f"YouTube 업로드 HTTP {status}: {text[:500]}")
+        self.status = status
 
-    request = new_request()
-    response = None
+
+def _auth(creds, force_refresh: bool = False) -> dict:
+    if force_refresh or not creds.valid:
+        creds.refresh(Request())
+    return {"Authorization": f"Bearer {creds.token}"}
+
+
+def _start_session(creds, body: dict, size: int) -> str:
+    r = requests.post(_UPLOAD_URL, timeout=60, data=json.dumps(body).encode("utf-8"), headers={
+        **_auth(creds),
+        "Content-Type": "application/json; charset=UTF-8",
+        "X-Upload-Content-Type": "video/mp4",
+        "X-Upload-Content-Length": str(size),
+    })
+    if r.status_code != 200 or "Location" not in r.headers:
+        raise UploadError(r.status_code, r.text)
+    return r.headers["Location"]
+
+
+def _offset_from(r) -> int:
+    rng = r.headers.get("Range")  # "bytes=0-12345"
+    return int(rng.rsplit("-", 1)[1]) + 1 if rng else 0
+
+
+def _query_offset(creds, session_url: str, size: int):
+    """서버가 지금까지 받은 바이트 수를 묻는다. 이미 끝났으면 (None, 응답 JSON)."""
+    r = requests.put(session_url, timeout=60, headers={
+        **_auth(creds), "Content-Range": f"bytes */{size}", "Content-Length": "0"})
+    if r.status_code in (200, 201):
+        return None, r.json()
+    if r.status_code == 308:
+        return _offset_from(r), None
+    raise UploadError(r.status_code, r.text)
+
+
+def resumable_insert(creds, body: dict, video_path: str, max_attempts: int = 5) -> dict:
+    size = os.path.getsize(video_path)
+    session_url = None
+    offset = 0
     attempt = 0
-    while response is None:
-        try:
-            status, response = request.next_chunk()
-            if status:
-                print(f"업로드 중... {int(status.progress() * 100)}%")
-        except HttpError as exc:
-            code = exc.resp.status
-            if code not in _SESSION_GONE and code not in _RETRYABLE:
-                raise
-            attempt += 1
-            if attempt >= max_attempts:
-                raise
-            wait = 10 * attempt
-            if code in _SESSION_GONE:
-                print(f"[업로드] HTTP {code} — 업로드 세션 소실, {wait}초 후 처음부터 재시도 ({attempt}/{max_attempts - 1})")
+    force_refresh = False
+    with open(video_path, "rb") as f:
+        while True:
+            try:
+                if session_url is None:
+                    session_url = _start_session(creds, body, size)
+                    offset = 0
+                f.seek(offset)
+                chunk = f.read(_CHUNK)
+                last = offset + len(chunk) - 1
+                r = requests.put(session_url, data=chunk, timeout=600, headers={
+                    **_auth(creds, force_refresh),
+                    "Content-Length": str(len(chunk)),
+                    "Content-Range": f"bytes {offset}-{last}/{size}",
+                })
+                force_refresh = False
+                if r.status_code in (200, 201):
+                    print("업로드 중... 100%")
+                    return r.json()
+                if r.status_code == 308:
+                    offset = _offset_from(r)
+                    print(f"업로드 중... {int(offset * 100 / size)}%")
+                    continue
+                raise UploadError(r.status_code, r.text)
+            except (UploadError, requests.ConnectionError, requests.Timeout) as exc:
+                code = getattr(exc, "status", None)
+                if code is not None and code not in _SESSION_GONE | _RETRYABLE | {401}:
+                    raise
+                attempt += 1
+                if attempt >= max_attempts:
+                    raise
+                wait = 10 * attempt
+                print(f"[업로드] {exc} — {wait}초 후 재시도 ({attempt}/{max_attempts - 1})")
                 time.sleep(wait)
-                request = new_request()
-            else:
-                print(f"[업로드] HTTP {code} — {wait}초 후 이어서 재시도 ({attempt}/{max_attempts - 1})")
-                time.sleep(wait)
-    return response
+                if code in _SESSION_GONE:
+                    session_url = None  # 처음부터 새 세션
+                    continue
+                if code == 401:
+                    force_refresh = True
+                if session_url is not None:
+                    try:
+                        offset, done = _query_offset(creds, session_url, size)
+                        if done is not None:
+                            return done
+                    except UploadError as qexc:
+                        if qexc.status in _SESSION_GONE:
+                            session_url = None
+                    except (requests.ConnectionError, requests.Timeout):
+                        pass
 
 
 def upload(video_path: str, title: str, description: str, tags: list[str], coupang_url: str,
@@ -172,7 +244,7 @@ def upload(video_path: str, title: str, description: str, tags: list[str], coupa
             "containsSyntheticMedia": True,
         },
     }
-    response = resumable_insert(youtube, body, video_path)
+    response = resumable_insert(creds, body, video_path)
 
     video_id = response["id"]
     print(f"업로드 완료 (public): https://youtu.be/{video_id}")

@@ -407,7 +407,7 @@ def upload_longform(video_path: Path, title: str, description: str, tags: list[s
         "snippet": {"title": title, "description": desc_format.format_description(description), "tags": tags, "categoryId": "22"},
         "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False, "containsSyntheticMedia": True},
     }
-    response = upload_youtube.resumable_insert(youtube, body, video_path)
+    response = upload_youtube.resumable_insert(creds, body, str(video_path))
     video_id = response["id"]
 
     # 기존엔 썸네일 설정 코드가 아예 없어서 유튜브가 영상에서 자동 선택한 프레임이
