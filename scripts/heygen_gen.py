@@ -13,7 +13,9 @@ import http.client
 import json
 import os
 import random
+import re
 import socket
+import subprocess
 import time
 from pathlib import Path
 from urllib import request as urlreq
@@ -167,6 +169,48 @@ def download(url: str, out_path: Path):
     out_path.write_bytes(_urlopen_with_retry(req, 60, f"다운로드 {out_path.name}"))
 
 
+# 2026-10-08: female 낮 편(QipaoOn_Ko4) 인트로가 "…아직도 손으로"에서 끊기고 "하시나요?"가
+# 빠진 채 발행됨. 코드에는 자르는 곳이 없고, HeyGen이 받은 훅 클립 자체가 2.74초로 대사보다
+# 짧았다(대사 글자 20자 → 초당 7.3자; 정상 발행분 5편은 초당 4.8~5.6자). 그래서 내려받은 클립
+# 길이를 대사 글자 수와 비교해, 비정상적으로 짧으면(끝부분 잘림) 그 클립만 한 번 다시 만든다.
+MAX_CHARS_PER_SEC = 6.5
+
+
+def _speech_chars(text: str) -> int:
+    return len(re.findall(r"[가-힣A-Za-z0-9]", text))
+
+
+def _clip_duration(path: Path) -> float:
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                         capture_output=True, text=True, check=True)
+    return float(out.stdout.strip())
+
+
+def _clip_cut_short(path: Path, script: str) -> tuple[bool, float, float]:
+    """(잘림 의심 여부, 실제 길이, 최소 기대 길이)"""
+    need = _speech_chars(script) / MAX_CHARS_PER_SEC
+    try:
+        dur = _clip_duration(path)
+    except Exception as e:  # noqa: BLE001 — 길이를 못 재면 검사 생략(발행은 막지 않음)
+        print(f"[heygen_gen] {path.name} 길이 측정 실패, 잘림 검사 생략: {e}")
+        return False, 0.0, need
+    return dur < need, dur, need
+
+
+def ensure_full_clip(out_path: Path, image_path: Path, asset_id: str, script: str, voice_id: str, title: str) -> None:
+    cut, dur, need = _clip_cut_short(out_path, script)
+    if not cut:
+        return
+    print(f"[heygen_gen] ⚠ {title} 영상이 대사보다 짧음({dur:.2f}초 < 최소 {need:.2f}초) — 끝부분 잘림 의심, 한 번 다시 생성")
+    vid = create_video_with_retry(image_path, asset_id, script, voice_id, f"{title}-retry")
+    download(poll_video(vid), out_path)
+    cut, dur, need = _clip_cut_short(out_path, script)
+    if cut:
+        print(f"[heygen_gen] ⚠ {title} 재생성도 짧음({dur:.2f}초 < {need:.2f}초) — 그대로 진행(대사 끝이 잘렸을 수 있음)")
+    else:
+        print(f"[heygen_gen] {title} 재생성 정상({dur:.2f}초)")
+
+
 def _load_char_history() -> dict:
     if CHAR_HISTORY_PATH.exists():
         return json.loads(CHAR_HISTORY_PATH.read_text(encoding="utf-8"))
@@ -245,6 +289,9 @@ def main():
     cta_url = poll_video(cta_vid_id)
     download(cta_url, out_dir / "cta.mp4")
     print("CTA 영상 다운로드 완료")
+
+    ensure_full_clip(out_dir / "hook.mp4", hook_img, hook_asset, script_data["hook_speech"], voice_id, "auto-hook")
+    ensure_full_clip(out_dir / "cta.mp4", cta_img, cta_asset, script_data["cta_speech"], voice_id, "auto-cta")
 
 
 if __name__ == "__main__":
