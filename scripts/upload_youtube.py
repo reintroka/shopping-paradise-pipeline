@@ -168,7 +168,48 @@ def resumable_insert(creds, body: dict, video_path: str, max_attempts: int = _AU
             else:
                 print(f"[업로드] HTTP {code} — {wait}초 후 이어서 재시도 ({attempt}/{max_attempts - 1})")
                 time.sleep(wait)
+    cleanup_orphan_uploads(youtube, body["snippet"]["title"], keep_id=response["id"])
     return response
+
+
+# 2026-10-09: 10/8 401/410 폭주 때 끊긴 업로드 시도마다 파일 없는 빈 영상이 Studio
+# '임시저장'에 "곧 처리 시작됨"으로 남았다(같은 제목 여러 개). 업로드 성공 직후 같은
+# 제목이면서 처리 완료(processed)가 아닌 다른 영상 = 끊긴 시도의 껍데기로 보고 지운다.
+# 정상 공개된 예전 영상은 uploadStatus가 processed라 같은 제목이어도 건드리지 않는다.
+# 정리 실패는 업로드 결과에 영향 없도록 경고만 남긴다.
+_ORPHAN_LOOKBACK = 25
+
+
+def find_orphan_uploads(youtube, title: str | None, keep_id: str | None = None) -> list[dict]:
+    """최근 업로드 중 처리 완료가 아닌 영상. title을 주면 같은 제목만."""
+    ch = execute_401_retry(lambda: youtube.channels().list(part="contentDetails", mine=True), "업로드 목록")
+    uploads = ch["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
+    items = execute_401_retry(lambda: youtube.playlistItems().list(
+        part="contentDetails", playlistId=uploads, maxResults=_ORPHAN_LOOKBACK), "업로드 목록")
+    ids = [it["contentDetails"]["videoId"] for it in items.get("items", [])]
+    ids = [i for i in ids if i != keep_id]
+    if not ids:
+        return []
+    vids = execute_401_retry(lambda: youtube.videos().list(
+        part="snippet,status,processingDetails", id=",".join(ids)), "업로드 상태")
+    out = []
+    for v in vids.get("items", []):
+        if v["status"].get("uploadStatus") == "processed":
+            continue
+        if title is not None and v["snippet"].get("title", "").strip() != title.strip():
+            continue
+        out.append(v)
+    return out
+
+
+def cleanup_orphan_uploads(youtube, title: str, keep_id: str) -> None:
+    try:
+        orphans = find_orphan_uploads(youtube, title, keep_id)
+        for v in orphans:
+            execute_401_retry(lambda: youtube.videos().delete(id=v["id"]), "빈 영상 삭제")
+            print(f"[업로드] 끊긴 시도의 빈 영상 삭제: {v['id']} ({v['status'].get('uploadStatus')})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[경고] 빈 영상 정리 실패, 건너뜁니다: {exc}")
 
 
 def upload(video_path: str, title: str, description: str, tags: list[str], coupang_url: str,
