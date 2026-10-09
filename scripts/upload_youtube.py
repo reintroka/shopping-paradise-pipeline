@@ -178,6 +178,7 @@ def resumable_insert(creds, body: dict, video_path: str, max_attempts: int = _AU
 # 정상 공개된 예전 영상은 uploadStatus가 processed라 같은 제목이어도 건드리지 않는다.
 # 정리 실패는 업로드 결과에 영향 없도록 경고만 남긴다.
 _ORPHAN_LOOKBACK = 25
+_UPLOADED_THIS_RUN: set = set()  # 이번 실행에서 정상 업로드된 영상은 같은 제목이어도 절대 지우지 않는다
 
 
 def find_orphan_uploads(youtube, title: str | None, keep_id: str | None = None) -> list[dict]:
@@ -187,14 +188,14 @@ def find_orphan_uploads(youtube, title: str | None, keep_id: str | None = None) 
     items = execute_401_retry(lambda: youtube.playlistItems().list(
         part="contentDetails", playlistId=uploads, maxResults=_ORPHAN_LOOKBACK), "업로드 목록")
     ids = [it["contentDetails"]["videoId"] for it in items.get("items", [])]
-    ids = [i for i in ids if i != keep_id]
+    ids = [i for i in ids if i != keep_id and i not in _UPLOADED_THIS_RUN]
     if not ids:
         return []
     vids = execute_401_retry(lambda: youtube.videos().list(
         part="snippet,status,processingDetails", id=",".join(ids)), "업로드 상태")
     out = []
     for v in vids.get("items", []):
-        if v["status"].get("uploadStatus") == "processed":
+        if v["status"].get("uploadStatus") != "uploaded":  # 처리 중에 멈춘 것만. 거부·실패 영상은 건드리지 않음
             continue
         if title is not None and v["snippet"].get("title", "").strip() != title.strip():
             continue
@@ -203,6 +204,7 @@ def find_orphan_uploads(youtube, title: str | None, keep_id: str | None = None) 
 
 
 def cleanup_orphan_uploads(youtube, title: str, keep_id: str) -> None:
+    _UPLOADED_THIS_RUN.add(keep_id)
     try:
         orphans = find_orphan_uploads(youtube, title, keep_id)
         for v in orphans:
