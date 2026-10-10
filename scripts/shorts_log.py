@@ -33,7 +33,8 @@ def save_log(entries: list[dict]):
 def append_entry(character: str, product_name: str, price: int, video_id: str, url: str, coupang_url: str,
                   specs: list[dict] | None = None, product_image: str | None = None,
                   hook_speech: str | None = None, cta_speech: str | None = None, rank: int | None = None,
-                  product_name_full: str | None = None, ig_caption: str | None = None):
+                  product_name_full: str | None = None, ig_caption: str | None = None,
+                  video_format: str | None = None):
     now_kst = datetime.now(KST)
     entries = load_log()
     entry = {
@@ -49,6 +50,10 @@ def append_entry(character: str, product_name: str, price: int, video_id: str, u
     }
     if specs:
         entry["specs"] = specs
+    # 2026-10-10: 화면 형식(usage_broll=Pexels 사용 장면 / seedance=상품 AI영상 / still=정지 사진+크래시줌) — 성과 분석에서
+    # 편마다 형식을 몰라 '가전은 폴백' 같은 추정밖에 못 했던 것 보완.
+    if video_format:
+        entry["video_format"] = video_format
     if product_image:
         entry["product_image"] = product_image
     # 2026-09-18 추가: hook_speech/cta_speech/rank — run_cards.py(발행 2시간 후

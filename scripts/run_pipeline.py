@@ -472,6 +472,7 @@ def main():
         ],
         hook_speech=script_data["hook_speech"], cta_speech=script_data["cta_speech"], rank=product_rank,
         product_name_full=product["productName"], ig_caption=ig_caption,
+        video_format=("usage_broll" if usage_ready else "seedance" if product_video_path.exists() else "still"),
     )
 
     # 12. 3일치(6개) 쌓였으면 롱폼 자동 제작+업로드
