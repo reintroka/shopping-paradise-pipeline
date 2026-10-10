@@ -653,8 +653,17 @@ def cmd_build(json_file):
     except Exception as e:  # noqa: BLE001
         print(f"[lf2] 댓글 등록 실패(무시): {e}")
 
+    linked = []
+    try:   # 2026-10-10 사용자 요청: 같은 상품군 쇼츠 ↔ 이 롱폼 자동 연결(설명란·댓글, 관련 동영상 지정은 텔레그램 안내)
+        import link_shorts
+        qs = next((q for tp, q, _ in TOPICS if tp == prep["topic"]), [])
+        linked = link_shorts.link(prep["topic"], qs, res["video_id"], spec["title"], notify)
+    except Exception as e:  # noqa: BLE001
+        print(f"[lf2] 쇼츠 연결 실패(무시): {e}")
+
     st = load_state()
-    st["history"].append({"date": prep["date"], "topic": prep["topic"], "video_id": res["video_id"], "title": spec["title"]})
+    st["history"].append({"date": prep["date"], "topic": prep["topic"], "video_id": res["video_id"], "title": spec["title"],
+                          "linked_shorts": linked})
     save_state(st)
     _commit_state()
     mins = t / 60
