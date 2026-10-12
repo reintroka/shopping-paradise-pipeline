@@ -61,7 +61,7 @@ git 자격증명이 같은 계정 소유의 private repo에도 push 권한이 �
 - `assets/fonts/NotoSerifKR-VF.ttf` — v15 골드 포일 타이틀/카드/자막에 쓰는 세리프 가변폰트
 - `assets/logo/channel_logo.png` — 쇼핑의천국 실제 로고
 - `assets/sfx/` — pop.mp3(카드 등장), whoosh-short.mp3(컷 전환)
-- `scripts/pick_product.py` — 쿠팡 API로 고가 전자제품 선정, 중복 방지(`used_products.json`)
+- `scripts/pick_product.py` — 쿠팡 API로 10만 원 이하 생활·주방 상품 선정(검색 순위 1위), 중복 방지(`used_products.json`)
 - `scripts/gen_script.py` — Gemini로 훅/스펙/CTA 대본 + SEO 메타데이터 생성.
   나레이션은 스펙 1개당 문장 1개(`narration_script1/2/3`)로 분리되어 있어서
   컷 전환이 문장 경계와 정확히 맞음(2026-08-27, 기존엔 1개 통짜를 3등분했었음).
