@@ -18,14 +18,49 @@ TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
 CHAT_ID_ENV = "TELEGRAM_CHAT_ID"
 
 
+def _tg_urlopen_retry(req, timeout):
+    """2026-10-13: 텔레그램 전송 재시도(유튜브 13채널 _tg_urlopen_retry 와 같음). 카드뉴스
+    틱톡용 전송이 'Connection reset by peer' 한 번에 그대로 실패한 사고 대응 — 일시적
+    오류(연결 끊김·5xx·429)만 최대 3회(3초→8초 대기, 429는 retry_after 최대 7초) 재시도한다.
+    400/401/403/404 같은 영구 오류는 바로 포기. 요청을 다 보낸 뒤 응답 대기 중 난 시간
+    초과(URLError 로 안 감싼 TimeoutError)는 텔레그램이 이미 받았을 수 있어 다시 보내지
+    않는다(중복 발송 방지). 마지막 실패는 예외를 그대로 올려 호출부 처리를 따른다."""
+    import http.client
+    import urllib.error
+
+    waits = (3, 8)
+    for attempt in range(len(waits) + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=max(timeout, 30)) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as exc:
+            if attempt >= len(waits) or not (exc.code == 429 or exc.code >= 500):
+                raise
+            wait = waits[attempt]
+            if exc.code == 429:
+                try:
+                    ra = json.loads(exc.read().decode("utf-8")).get("parameters", {}).get("retry_after")
+                    if ra:
+                        wait = min(int(ra), 7)
+                except Exception:  # noqa: BLE001
+                    pass
+            err = exc
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
+            if attempt >= len(waits) or (isinstance(exc, TimeoutError) and not isinstance(exc, urllib.error.URLError)):
+                raise
+            wait = waits[attempt]
+            err = exc
+        print(f"  [텔레그램] 전송 실패({err}) → {wait}초 후 재시도 ({attempt + 2}/{len(waits) + 1})")
+        time.sleep(wait)
+
+
 def send(text: str) -> None:
     token = os.environ[TOKEN_ENV]
     chat_id = os.environ[CHAT_ID_ENV]
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     body = json.dumps({"chat_id": chat_id, "text": text}).encode("utf-8")
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        resp.read()
+    _tg_urlopen_retry(req, timeout=15)
 
 
 def send_photos(image_paths: list, caption: str = "") -> None:
@@ -65,8 +100,7 @@ def send_photos(image_paths: list, caption: str = "") -> None:
     req = urllib.request.Request(
         url, data=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}, method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        resp.read()
+    _tg_urlopen_retry(req, timeout=30)
 
     if caption:
         send(caption)
