@@ -404,7 +404,7 @@ def render_middle(work_dir: Path, info: dict, switches: list, audio: Path) -> Pa
                "-loop", "1", "-i", str(work_dir / f"ub_panel{i}.png"),
                "-loop", "1", "-i", str(work_dir / "ub_card.png")]
         lines = [
-            f"[0:v]scale={W}:-2,crop={W}:{CLIP_H}:0:'max(0,(ih-{CLIP_H})/3)',"
+            f"[0:v]scale={W}:{CLIP_H}:force_original_aspect_ratio=increase,crop={W}:{CLIP_H}:'(iw-{W})/2':'max(0,(ih-{CLIP_H})/3)',"
             f"scale=w='{W}*(1+0.06*t/{d:.2f})':h=-2:eval=frame,crop={W}:{CLIP_H},setsar=1,eq=saturation=0.95,"
             f"fps={FPS},format=rgba,pad={W}:{H}:0:0:color=#161210[bg];",
             "[bg][1:v]overlay=0:0:shortest=1[a];",

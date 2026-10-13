@@ -321,7 +321,13 @@ def main():
 
     # 6. 최종 조립
     final_video = work_dir / "final.mp4"
-    assemble_video.assemble(work_dir, final_video)
+    usage_render_error = assemble_video.assemble(work_dir, final_video)
+    # 2026-10-13: 클립은 찾았는데 렌더에서 폴백되면(52gHu7ca63E — 가로 클립 crop 오류) 알림·shorts_log가
+    # '사용 장면 성공'으로 남아 기존 화면으로 나간 걸 몰랐다. 실제 화면 기준으로 고쳐 적는다.
+    if usage_ready and usage_render_error:
+        usage_ready = False
+        soft_step_results[:] = [r for r in soft_step_results if r[0] != "사용 장면 영상"]
+        soft_step_results.append(("사용 장면 영상", False, f"클립 준비됐지만 렌더 실패 — 기존 화면으로 발행: {usage_render_error}"))
 
     # 7. 유튜브 업로드 (필수)
     video_id_path = work_dir / "video_id.json"

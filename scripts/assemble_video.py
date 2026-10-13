@@ -407,7 +407,8 @@ def build_cta_segment(work_dir: Path) -> Path:
     return out_path
 
 
-def assemble(work_dir: Path, out_path: Path):
+def assemble(work_dir: Path, out_path: Path) -> str | None:
+    """사용 장면 렌더가 실패해 기존 화면으로 폴백했으면 그 오류 문자열, 아니면 None."""
     durs = [_beat_duration(work_dir, i) for i in (1, 2, 3)]
     starts, ends = compute_beat_timing(durs)
     total_dur = ends[-1]
@@ -418,6 +419,7 @@ def assemble(work_dir: Path, out_path: Path):
     # 만든다. 렌더 중 어떤 오류든 나면 기존 화면(정지 상품 사진)으로 다시 만들어 발행은 막지 않는다.
     info = usage_broll.load(work_dir)
     middle_path = hook_path = None
+    usage_error = None
     if info:
         try:
             switches = [0.0] + [ends[i] + SWITCH_OFFSET for i in range(len(durs) - 1)] + [total_dur]
@@ -426,6 +428,7 @@ def assemble(work_dir: Path, out_path: Path):
             print("[assemble_video] 사용 장면 화면으로 훅·기능 구간 완료")
         except Exception as e:  # noqa: BLE001
             print(f"[assemble_video] 사용 장면 렌더 실패, 기존 화면으로 폴백: {e}")
+            usage_error = str(e)[-300:]
             middle_path = hook_path = None
     if not middle_path:
         middle_path = build_middle_segment(work_dir, durs, starts, ends, total_dur)
@@ -445,6 +448,7 @@ def assemble(work_dir: Path, out_path: Path):
          "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
          str(out_path)])
     print(f"[assemble_video] 최종 영상 완료: {out_path}")
+    return usage_error
 
 
 if __name__ == "__main__":
