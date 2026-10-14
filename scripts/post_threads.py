@@ -365,7 +365,7 @@ def post_text(threads_user_id, access_token, caption, out_path):
     _finish_and_write(threads_user_id, access_token, container_id, out_path, "text")
 
 
-def post_carousel(threads_user_id, access_token, image_paths, caption, out_path):
+def _host_and_create_carousel_items(threads_user_id, access_token, image_paths) -> list:
     ts = int(time.time())
     filenames = [f"th-card{i}-{ts}.png" for i in range(1, len(image_paths) + 1)]
     urls = publish_to_temp_host(dict(zip(filenames, image_paths)))
@@ -381,8 +381,33 @@ def post_carousel(threads_user_id, access_token, image_paths, caption, out_path)
         wait_for_container_ready(item_id, access_token)
         item_ids.append(item_id)
     print(f"[post_threads:carousel] 아이템 컨테이너 {len(item_ids)}개 처리 완료")
+    return item_ids
 
-    container_id = create_carousel_container(threads_user_id, access_token, item_ids, caption)
+
+def post_carousel(threads_user_id, access_token, image_paths, caption, out_path,
+                  max_attempts: int = 3, wait_secs: int = 30):
+    """2026-10-14: female 카드뉴스에서 아이템 컨테이너가 전부 FINISHED였는데도 캐러셀
+    묶음 생성이 "Invalid Carousel Children"(error_subcode 4279004, "invalid,
+    nonexistent, or expired")로 실패 — 4279009(Media Not Found)와 같은 Meta 쪽 지연
+    계열로 보이고, 같은 media 저장소를 다른 실행이 force push해 이미지 URL이 사라졌을
+    가능성도 있다. 그래서 이 오류일 때만 이미지를 다시 올리고 아이템을 새로 만든 뒤
+    다시 묶는다(기존 아이템 ID를 그대로 재사용하면 만료된 경우 안 풀림)."""
+    for attempt in range(max_attempts):
+        item_ids = _host_and_create_carousel_items(threads_user_id, access_token, image_paths)
+        try:
+            container_id = create_carousel_container(threads_user_id, access_token, item_ids, caption)
+            break
+        except RuntimeError as e:
+            msg = str(e)
+            if not ('"error_subcode":4279004' in msg or "invalid carousel children" in msg.lower()):
+                raise
+            if attempt == max_attempts - 1:
+                raise
+            print(
+                f"  [post_threads] 캐러셀 자식 무효(4279004), {wait_secs}초 후 이미지 재호스팅·"
+                f"아이템 재생성 ({attempt + 1}/{max_attempts})"
+            )
+            time.sleep(wait_secs)
     print(f"[post_threads:carousel] 캐러셀 컨테이너 생성: {container_id}")
     wait_for_container_ready(container_id, access_token)
 
