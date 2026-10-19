@@ -212,7 +212,7 @@ def render_segment(bg_sources, wav, dur, times, layers, out: Path, work: Path, t
                  "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(pp)])
         else:
             run(["ffmpeg", "-y", "-v", "error", "-stream_loop", "-1", "-i", str(src), "-t", f"{per + 0.05:.2f}", "-an", "-vf",
-                 f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS},format=yuv420p",
+                 f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps={FPS},format=yuv420p",
                  "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(pp)])
         parts.append(pp)
     lst = work / f"{tag}_bg.txt"
