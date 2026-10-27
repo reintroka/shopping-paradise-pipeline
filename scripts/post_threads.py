@@ -135,7 +135,9 @@ def publish_to_temp_host(files: dict) -> dict:
     return {filename: f"{MEDIA_PAGES_BASE}/{filename}" for filename in files}
 
 
-def wait_until_reachable(url: str, timeout_secs: int = 180) -> None:
+# 2026-10-27: 평소 Pages 빌드는 20~30초지만 이날 쓰레드 영상 커밋만 288초 걸려 180초 한도에
+# 걸려 실패(4.8분 뒤엔 정상 200) — GitHub 쪽 빌드 지연 대비로 넉넉히 잡는다.
+def wait_until_reachable(url: str, timeout_secs: int = 480) -> None:
     deadline = time.time() + timeout_secs
     last_err = None
     while time.time() < deadline:

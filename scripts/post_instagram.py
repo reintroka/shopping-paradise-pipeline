@@ -164,7 +164,9 @@ def publish_to_temp_host(video_path: Path) -> str:
     return f"{MEDIA_PAGES_BASE}/{media_filename}"
 
 
-def wait_until_reachable(url: str, timeout_secs: int = 180) -> None:
+# 2026-10-27: 평소 Pages 빌드는 20~30초지만 이날 쓰레드 영상 커밋만 288초 걸려 180초 한도에
+# 걸려 실패(4.8분 뒤엔 정상 200) — GitHub 쪽 빌드 지연 대비로 넉넉히 잡는다.
+def wait_until_reachable(url: str, timeout_secs: int = 480) -> None:
     """GitHub Pages 배포에는 push 후 수십 초~수 분 정도 걸릴 수 있어서, 인스타그램에
     video_url을 넘기기 전에 실제로 그 URL이 응답하는지(200) 폴링으로 확인한다."""
     deadline = time.time() + timeout_secs
