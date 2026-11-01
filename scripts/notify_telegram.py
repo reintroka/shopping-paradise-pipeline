@@ -34,7 +34,8 @@ def _tg_urlopen_retry(req, timeout):
             with urllib.request.urlopen(req, timeout=max(timeout, 30)) as resp:
                 return resp.read()
         except urllib.error.HTTPError as exc:
-            if attempt >= len(waits) or not (exc.code == 429 or exc.code >= 500):
+            # 2026-11-01: 429(텔레그램이 보내지 않고 거절)만 재시도. 5xx 는 이미 보냈을 수 있어 다시 안 보낸다.
+            if attempt >= len(waits) or exc.code != 429:
                 raise
             wait = waits[attempt]
             if exc.code == 429:
@@ -45,8 +46,11 @@ def _tg_urlopen_retry(req, timeout):
                 except Exception:  # noqa: BLE001
                     pass
             err = exc
-        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
-            if attempt >= len(waits) or (isinstance(exc, TimeoutError) and not isinstance(exc, urllib.error.URLError)):
+        except urllib.error.URLError as exc:
+            # 2026-11-01: 요청을 다 보내기 전(연결·DNS·송신 중) 실패만 urllib 가 URLError 로 감싼다 → 안 보내졌으니 재시도.
+            # 다 보낸 뒤 응답 대기 중 난 연결 끊김·RemoteDisconnected·시간 초과는 OSError/HTTPException 그대로
+            # 올라와 재시도하지 않는다(텔레그램이 이미 보냈을 수 있음) — 우주의 신비 아침 업로드 알림이 2번 온 사고.
+            if attempt >= len(waits):
                 raise
             wait = waits[attempt]
             err = exc
