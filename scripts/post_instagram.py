@@ -37,6 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import secrets_store  # noqa: E402
+from temp_host_push import push_with_retry  # noqa: E402
 
 GRAPH_API_VERSION = "v21.0"
 GRAPH_BASE = f"https://graph.instagram.com/{GRAPH_API_VERSION}"
@@ -132,7 +133,7 @@ def publish_images_to_temp_host(image_paths: list) -> list:
              "-c", "user.name=shopping-paradise-bot", "commit", "-q", "-m", f"temp host {len(filenames)} file(s)"],
             check=True,
         )
-        subprocess.run(["git", "-C", str(tmp_path), "push", "--force", "origin", "HEAD:main"], check=True)
+        push_with_retry(tmp_path)
     return [f"{MEDIA_PAGES_BASE}/{f}" for f in filenames]
 
 
@@ -160,7 +161,7 @@ def publish_to_temp_host(video_path: Path) -> str:
              "-c", "user.name=shopping-paradise-bot", "commit", "-q", "-m", f"temp host {media_filename}"],
             check=True,
         )
-        subprocess.run(["git", "-C", str(tmp_path), "push", "--force", "origin", "HEAD:main"], check=True)
+        push_with_retry(tmp_path)
     return f"{MEDIA_PAGES_BASE}/{media_filename}"
 
 

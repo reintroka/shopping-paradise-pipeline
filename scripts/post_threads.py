@@ -41,6 +41,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import secrets_store  # noqa: E402
+from temp_host_push import push_with_retry  # noqa: E402
 
 GRAPH_API_VERSION = "v1.0"
 GRAPH_BASE = f"https://graph.threads.net/{GRAPH_API_VERSION}"
@@ -131,7 +132,7 @@ def publish_to_temp_host(files: dict) -> dict:
              "-c", "user.name=shopping-paradise-bot", "commit", "-q", "-m", f"temp host {len(files)} file(s)"],
             check=True,
         )
-        subprocess.run(["git", "-C", str(tmp_path), "push", "--force", "origin", "HEAD:main"], check=True)
+        push_with_retry(tmp_path)
     return {filename: f"{MEDIA_PAGES_BASE}/{filename}" for filename in files}
 
 
