@@ -291,11 +291,19 @@ def publish_container_with_retry(
             msg = str(e)
             is_rate_limit = '"code":4' in msg or "request limit reached" in msg.lower()
             is_generic_internal = '"error_subcode":2207085' in msg or "generic internal error" in msg.lower()
-            if not is_rate_limit and not is_generic_internal:
+            # 2026-11-06: 부모 컨테이너가 FINISHED인데도 "The media is not ready for
+            # publishing, please wait for a moment"(2207027)로 거절되어 카드뉴스가 유실됨.
+            is_not_ready = '"error_subcode":2207027' in msg
+            if not is_rate_limit and not is_generic_internal and not is_not_ready:
                 raise
             last_exc = e
             if attempt < max_attempts - 1:
-                reason = "앱 요청 한도 초과" if is_rate_limit else "Meta 서버 일시 오류(Generic Internal Error)"
+                if is_rate_limit:
+                    reason = "앱 요청 한도 초과"
+                elif is_not_ready:
+                    reason = "미디어 준비 안 됨(2207027)"
+                else:
+                    reason = "Meta 서버 일시 오류(Generic Internal Error)"
                 print(
                     f"  [post_instagram] {reason}, {wait_secs}초 후 발행 재시도 "
                     f"({attempt + 1}/{max_attempts})"
