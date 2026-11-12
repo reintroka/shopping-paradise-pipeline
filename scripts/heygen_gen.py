@@ -121,6 +121,10 @@ _VOICE_SETTINGS_CHAIN = [
     None,  # 목소리 본래 억양(최후 수단)
 ]
 _VS = {"i": 0}
+# 영상 id → 그 영상을 만들 때 쓴 설정 단계. 2026-11-12: 훅·CTA를 같은 단계(0)로 미리 만들어 두고
+# 훅 폴링에서 단계가 끝(None)까지 내려간 뒤, CTA가 옛 단계(0)로 실패하자 "더 내려갈 단계 없음"으로
+# 바로 죽었다. 옛 단계로 만든 영상은 단계를 더 내리지 않고 현재 단계로 다시 만든다.
+_VID_STAGE = {}
 
 
 def _voice_settings():
@@ -167,7 +171,9 @@ def create_video(asset_id: str, script: str, voice_id: str, title: str) -> str:
             body.pop("voice_settings", None)
         try:
             result = _post_json("https://api.heygen.com/v3/videos", body)
-            return result["data"]["video_id"]
+            vid = result["data"]["video_id"]
+            _VID_STAGE[vid] = _VS["i"]
+            return vid
         except HeyGenHTTPError as e:
             # 엔진·locale 조합이 거절되면(400/422) 다음 설정으로. 404 등은 기존대로 위로.
             if e.code in (400, 422) and vs and _next_voice_settings(f"HTTP {e.code} {e.body[:200]}"):
@@ -217,7 +223,12 @@ def poll_or_recreate(video_id: str, image_path: Path, asset_id: str, script: str
     try:
         return poll_video(video_id)
     except HeyGenVideoFailed as e:
-        if not e.is_locale_error() or not _next_voice_settings(e.message):
+        if not e.is_locale_error():
+            raise
+        made_at = _VID_STAGE.get(video_id, _VS["i"])
+        if made_at < _VS["i"]:
+            print(f"[heygen_gen] {title}는 이전 목소리 설정(단계 {made_at})으로 만든 영상 — 현재 설정으로 다시 생성: {_voice_settings()}")
+        elif not _next_voice_settings(e.message):
             raise
         vid = create_video_with_retry(image_path, asset_id, script, voice_id, f"{title}-vs{_VS['i']}")
         return poll_or_recreate(vid, image_path, asset_id, script, voice_id, title)
