@@ -111,10 +111,28 @@ def upload_image(image_path: Path) -> str:
 
 
 # 2026-11-12: 여성(Gentle Gemma) 훅이 "VideoTTS does not support the requested locale 'ko-KR'"로
-# 생성 실패(생성 요청은 받아들여지고 상태 조회에서 failed). 전날까지 같은 설정으로 정상이었으니
-# HeyGen 쪽 목소리/엔진 변경. locale은 선택값이고 생략하면 목소리 본래 억양으로 읽는다 —
-# 이 오류가 나면 locale 없이 한 번 다시 만들고, 이후 이 실행에선 계속 locale 없이 요청한다.
-_LOCALE = {"value": "ko-KR"}
+# 생성 실패(생성 요청은 받아들여지고 상태 조회에서 failed). 두 목소리 모두 HeyGen 목록상
+# 영어(en-US) ElevenLabs 목소리인데 기본 엔진이 video_tts로 바뀌어 있었다 — video_tts는 ko-KR
+# 미지원이고, locale을 빼면 영어 억양으로 읽을 수 있다. 그래서 ElevenLabs 엔진을 직접 지정하고
+# ko-KR을 유지한다. 그래도 거절되면(생성 4xx 또는 locale 실패) 다음 설정으로 내려간다.
+_VOICE_SETTINGS_CHAIN = [
+    {"locale": "ko-KR", "engine_settings": {"engine_type": "elevenlabs", "model": "eleven_multilingual_v2"}},
+    {"locale": "ko-KR"},
+    None,  # 목소리 본래 억양(최후 수단)
+]
+_VS = {"i": 0}
+
+
+def _voice_settings():
+    return _VOICE_SETTINGS_CHAIN[_VS["i"]]
+
+
+def _next_voice_settings(reason) -> bool:
+    if _VS["i"] + 1 >= len(_VOICE_SETTINGS_CHAIN):
+        return False
+    _VS["i"] += 1
+    print(f"[heygen_gen] 목소리 설정 거절({reason}) — 다음 설정으로: {_voice_settings()}")
+    return True
 
 
 class HeyGenVideoFailed(RuntimeError):
@@ -141,10 +159,20 @@ def create_video(asset_id: str, script: str, voice_id: str, title: str) -> str:
         "resolution": "1080p",
         "title": title,
     }
-    if _LOCALE["value"]:
-        body["voice_settings"] = {"locale": _LOCALE["value"]}
-    result = _post_json("https://api.heygen.com/v3/videos", body)
-    return result["data"]["video_id"]
+    while True:
+        vs = _voice_settings()
+        if vs:
+            body["voice_settings"] = vs
+        else:
+            body.pop("voice_settings", None)
+        try:
+            result = _post_json("https://api.heygen.com/v3/videos", body)
+            return result["data"]["video_id"]
+        except HeyGenHTTPError as e:
+            # 엔진·locale 조합이 거절되면(400/422) 다음 설정으로. 404 등은 기존대로 위로.
+            if e.code in (400, 422) and vs and _next_voice_settings(f"HTTP {e.code} {e.body[:200]}"):
+                continue
+            raise
 
 
 def create_video_with_retry(image_path: Path, asset_id: str, script: str, voice_id: str, title: str, retries=3) -> str:
@@ -185,16 +213,14 @@ def poll_video(video_id: str, max_tries=90, wait_sec=5) -> str:
 
 
 def poll_or_recreate(video_id: str, image_path: Path, asset_id: str, script: str, voice_id: str, title: str) -> str:
-    """완료 URL 반환. locale 미지원으로 실패하면 locale 없이 한 번 다시 만든다."""
+    """완료 URL 반환. locale 미지원으로 실패하면 다음 목소리 설정으로 다시 만든다."""
     try:
         return poll_video(video_id)
     except HeyGenVideoFailed as e:
-        if not e.is_locale_error():
+        if not e.is_locale_error() or not _next_voice_settings(e.message):
             raise
-        print(f"[heygen_gen] {title} locale 미지원({e.message}) — locale 없이 다시 생성")
-        _LOCALE["value"] = None
-        vid = create_video_with_retry(image_path, asset_id, script, voice_id, f"{title}-noloc")
-        return poll_video(vid)
+        vid = create_video_with_retry(image_path, asset_id, script, voice_id, f"{title}-vs{_VS['i']}")
+        return poll_or_recreate(vid, image_path, asset_id, script, voice_id, title)
 
 
 def download(url: str, out_path: Path):
