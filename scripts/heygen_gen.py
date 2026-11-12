@@ -115,10 +115,12 @@ def upload_image(image_path: Path) -> str:
 # 영어(en-US) ElevenLabs 목소리인데 기본 엔진이 video_tts로 바뀌어 있었다 — video_tts는 ko-KR
 # 미지원이고, locale을 빼면 영어 억양으로 읽을 수 있다. 그래서 ElevenLabs 엔진을 직접 지정하고
 # ko-KR을 유지한다. 그래도 거절되면(생성 4xx 또는 locale 실패) 다음 설정으로 내려간다.
+# 2026-11-12 저녁: 실운영에서 ElevenLabs 지정+ko-KR, ko-KR만 둘 다 같은 VideoTTS 오류로 실패
+# (locale 검사가 기본 엔진 video_tts 기준으로 걸리는 것으로 보임). 웹 목소리 목록상 두 목소리 모두
+# elevenLabs 엔진 지원. ElevenLabs 다국어 모델은 대사 언어를 스스로 감지하므로 locale 없이 엔진만 지정.
 _VOICE_SETTINGS_CHAIN = [
-    {"locale": "ko-KR", "engine_settings": {"engine_type": "elevenlabs", "model": "eleven_multilingual_v2"}},
-    {"locale": "ko-KR"},
-    None,  # 목소리 본래 억양(최후 수단)
+    {"engine_settings": {"engine_type": "elevenlabs", "model": "eleven_multilingual_v2"}},
+    None,  # 목소리 기본 엔진(video_tts)·본래 억양(최후 수단)
 ]
 _VS = {"i": 0}
 # 영상 id → 그 영상을 만들 때 쓴 설정 단계. 2026-11-12: 훅·CTA를 같은 단계(0)로 미리 만들어 두고
