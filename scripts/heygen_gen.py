@@ -110,13 +110,29 @@ def upload_image(image_path: Path) -> str:
     return result["data"]["asset_id"]
 
 
+# 2026-11-12: 여성(Gentle Gemma) 훅이 "VideoTTS does not support the requested locale 'ko-KR'"로
+# 생성 실패(생성 요청은 받아들여지고 상태 조회에서 failed). 전날까지 같은 설정으로 정상이었으니
+# HeyGen 쪽 목소리/엔진 변경. locale은 선택값이고 생략하면 목소리 본래 억양으로 읽는다 —
+# 이 오류가 나면 locale 없이 한 번 다시 만들고, 이후 이 실행에선 계속 locale 없이 요청한다.
+_LOCALE = {"value": "ko-KR"}
+
+
+class HeyGenVideoFailed(RuntimeError):
+    def __init__(self, video_id, code, message):
+        self.code = code or ""
+        self.message = message or ""
+        super().__init__(f"HeyGen 영상 생성 실패 ({video_id}): {code} {message}")
+
+    def is_locale_error(self) -> bool:
+        return "locale" in self.message.lower()
+
+
 def create_video(asset_id: str, script: str, voice_id: str, title: str) -> str:
     body = {
         "type": "image",
         "image": {"type": "asset_id", "asset_id": asset_id},
         "script": script,
         "voice_id": voice_id,
-        "voice_settings": {"locale": "ko-KR"},
         "aspect_ratio": "9:16",
         # 2026-08-27: HeyGen v3 API가 "dimension":{width,height} 커스텀 객체를 더 이상
         # 안 받고(strict schema, "Extra inputs are not permitted" 400) resolution enum으로
@@ -125,6 +141,8 @@ def create_video(asset_id: str, script: str, voice_id: str, title: str) -> str:
         "resolution": "1080p",
         "title": title,
     }
+    if _LOCALE["value"]:
+        body["voice_settings"] = {"locale": _LOCALE["value"]}
     result = _post_json("https://api.heygen.com/v3/videos", body)
     return result["data"]["video_id"]
 
@@ -153,15 +171,30 @@ def create_video_with_retry(image_path: Path, asset_id: str, script: str, voice_
 def poll_video(video_id: str, max_tries=90, wait_sec=5) -> str:
     # 2026-09-12: 기존 200초(40*5) 예산으로는 HeyGen이 평소보다 느려질 때 완료 전에
     # 타임아웃되어(RuntimeError) 파이프라인 전체가 크래시하고 영상이 유실됐음. 450초(90*5)로 상향.
+    # 2026-11-12: v1 video_status.get은 2026-10-31 종료 예고된 레거시라 v3로 교체.
     for _ in range(max_tries):
-        result = _get_json(f"https://api.heygen.com/v1/video_status.get?video_id={video_id}")
-        status = result.get("data", {}).get("status")
+        result = _get_json(f"https://api.heygen.com/v3/videos/{video_id}")
+        data = result.get("data") or {}
+        status = data.get("status")
         if status == "completed":
-            return result["data"]["video_url"]
+            return data["video_url"]
         if status == "failed":
-            raise RuntimeError(f"HeyGen 영상 생성 실패: {result}")
+            raise HeyGenVideoFailed(video_id, data.get("failure_code"), data.get("failure_message"))
         time.sleep(wait_sec)
     raise RuntimeError("HeyGen 영상 생성 타임아웃")
+
+
+def poll_or_recreate(video_id: str, image_path: Path, asset_id: str, script: str, voice_id: str, title: str) -> str:
+    """완료 URL 반환. locale 미지원으로 실패하면 locale 없이 한 번 다시 만든다."""
+    try:
+        return poll_video(video_id)
+    except HeyGenVideoFailed as e:
+        if not e.is_locale_error():
+            raise
+        print(f"[heygen_gen] {title} locale 미지원({e.message}) — locale 없이 다시 생성")
+        _LOCALE["value"] = None
+        vid = create_video_with_retry(image_path, asset_id, script, voice_id, f"{title}-noloc")
+        return poll_video(vid)
 
 
 def download(url: str, out_path: Path):
@@ -203,7 +236,7 @@ def ensure_full_clip(out_path: Path, image_path: Path, asset_id: str, script: st
         return
     print(f"[heygen_gen] ⚠ {title} 영상이 대사보다 짧음({dur:.2f}초 < 최소 {need:.2f}초) — 끝부분 잘림 의심, 한 번 다시 생성")
     vid = create_video_with_retry(image_path, asset_id, script, voice_id, f"{title}-retry")
-    download(poll_video(vid), out_path)
+    download(poll_or_recreate(vid, image_path, asset_id, script, voice_id, f"{title}-retry"), out_path)
     cut, dur, need = _clip_cut_short(out_path, script)
     if cut:
         print(f"[heygen_gen] ⚠ {title} 재생성도 짧음({dur:.2f}초 < {need:.2f}초) — 그대로 진행(대사 끝이 잘렸을 수 있음)")
@@ -282,11 +315,11 @@ def main():
     hook_vid_id = create_video_with_retry(hook_img, hook_asset, script_data["hook_speech"], voice_id, "auto-hook")
     cta_vid_id = create_video_with_retry(cta_img, cta_asset, script_data["cta_speech"], voice_id, "auto-cta")
 
-    hook_url = poll_video(hook_vid_id)
+    hook_url = poll_or_recreate(hook_vid_id, hook_img, hook_asset, script_data["hook_speech"], voice_id, "auto-hook")
     download(hook_url, out_dir / "hook.mp4")
     print("훅 영상 다운로드 완료")
 
-    cta_url = poll_video(cta_vid_id)
+    cta_url = poll_or_recreate(cta_vid_id, cta_img, cta_asset, script_data["cta_speech"], voice_id, "auto-cta")
     download(cta_url, out_dir / "cta.mp4")
     print("CTA 영상 다운로드 완료")
 
