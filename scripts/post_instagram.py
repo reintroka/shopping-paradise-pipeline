@@ -263,7 +263,7 @@ def wait_for_container_ready(container_id: str, access_token: str, timeout_secs:
             return
         if status == "ERROR":
             if last_error is None:
-                print(f"  [post_instagram] 컨테이너 ERROR — 일시적일 수 있어 계속 확인: {result}")
+                print(f"  [post_instagram] 컨테이너 ERROR, 일시적일 수 있어 계속 확인: {result}")
             last_error = result
         time.sleep(20)
     if last_error:
