@@ -249,15 +249,25 @@ def wait_for_container_ready(container_id: str, access_token: str, timeout_secs:
     같은 300초 안에서 호출 횟수를 절반으로 줄인다(동작/기능은 동일, 최악의 경우 대기
     시간만 약간 늘어남).
     """
+    # 2026-11-15: 씽크선반 Reels가 첫 조회에서 ERROR로 나와 바로 실패 처리됐는데, 6분 뒤
+    # 같은 컨테이너를 조회하니 FINISHED였고 그대로 발행됨 — ERROR가 일시적으로 뜰 수 있다.
+    # ERROR가 나와도 제한 시간 안에서는 계속 조회하고, 끝까지 ERROR일 때만 실패로 본다.
     deadline = time.time() + timeout_secs
+    last_error = None
     while time.time() < deadline:
-        result = _get(f"{GRAPH_BASE}/{container_id}", {"fields": "status_code", "access_token": access_token})
+        result = _get(f"{GRAPH_BASE}/{container_id}", {"fields": "status,status_code", "access_token": access_token})
         status = result.get("status_code")
         if status == "FINISHED":
+            if last_error:
+                print(f"  [post_instagram] 앞서 ERROR였던 컨테이너가 FINISHED로 바뀜: {last_error}")
             return
         if status == "ERROR":
-            raise RuntimeError(f"인스타그램 영상 처리 실패: {result}")
+            if last_error is None:
+                print(f"  [post_instagram] 컨테이너 ERROR — 일시적일 수 있어 계속 확인: {result}")
+            last_error = result
         time.sleep(20)
+    if last_error:
+        raise RuntimeError(f"인스타그램 영상 처리 실패({timeout_secs}초 동안 ERROR): {last_error}")
     raise RuntimeError(f"인스타그램 영상 처리 시간 초과({timeout_secs}초)")
 
 
