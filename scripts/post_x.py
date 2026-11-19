@@ -195,7 +195,9 @@ def upload_media(image_path: str) -> str:
 
 def post_tweet(text: str, media_ids: list = None) -> dict:
     def _do():
-        url = "https://api.twitter.com/2/tweets"
+        # 2026-11-19: api.twitter.com에서 Cloudflare 봇 확인 페이지(403 HTML)가 와서 발행
+        # 실패 — 이미지 업로드는 api.x.com이라 통과했다. 같은 도메인으로 맞춘다.
+        url = "https://api.x.com/2/tweets"
         token = os.environ["X_ACCESS_TOKEN"]
         token_secret = os.environ["X_ACCESS_SECRET"]
         auth = build_auth_header("POST", url, {}, token, token_secret)
@@ -326,11 +328,28 @@ def _http_error_with_body(e: urllib.error.HTTPError) -> RuntimeError:
     났는데, 그동안 str(HTTPError)가 "HTTP Error 403: Forbidden"만 보여주고
     실제 응답 바디(X가 왜 거부했는지 설명하는 JSON)는 버려지고 있어서 원인을
     특정할 수 없었다. 응답 바디를 읽어 메시지에 포함시킨다."""
+    body = _read_error_body(e)
+    if _is_cloudflare_challenge(body):
+        # 2026-11-19: Cloudflare 확인 페이지 HTML 전체가 텔레그램 알림에 그대로 찍혔다.
+        body = "Cloudflare 봇 확인 페이지(X 서버가 요청을 막음, 일시적일 가능성 높음)"
+    return RuntimeError(f"HTTP {e.code}: {body[:500]}")
+
+
+def _read_error_body(e: urllib.error.HTTPError) -> str:
+    """HTTPError 바디는 한 번만 읽히므로 읽은 값을 e에 보관해 두고 재사용한다."""
+    cached = getattr(e, "_sp_body", None)
+    if cached is not None:
+        return cached
     try:
         body = e.read().decode("utf-8", errors="replace")
     except Exception:
         body = "(응답 바디 읽기 실패)"
-    return RuntimeError(f"HTTP {e.code}: {body}")
+    e._sp_body = body
+    return body
+
+
+def _is_cloudflare_challenge(body: str) -> bool:
+    return "cf_chl" in body or "challenge-platform" in body or "Just a moment" in body
 
 
 def post_tweet_with_retry(text: str, media_ids: list = None, max_tries: int = 2) -> dict:
@@ -346,8 +365,11 @@ def post_tweet_with_retry(text: str, media_ids: list = None, max_tries: int = 2)
     변형 후 길어지더라도 CTA는 안 잘리고 본문만 잘려서 발행되게 한다.
     """
     last_err = None
-    for i in range(max_tries):
-        if i == 0:
+    variant = 0  # 문구 변형 횟수(중복 콘텐츠 403일 때만 증가)
+    cf_retries = 0
+    i = 0
+    while i < max_tries:
+        if variant == 0:
             attempt_text = _truncate_preserving_cta(text)
         else:
             stripped = _strip_hashtags(text)
@@ -358,7 +380,17 @@ def post_tweet_with_retry(text: str, media_ids: list = None, max_tries: int = 2)
             last_err = _http_error_with_body(e)
             if e.code != 403:
                 raise last_err
+            # 2026-11-19: Cloudflare 확인 페이지는 문구 문제가 아니므로 문구는 그대로 두고
+            # 잠시 기다렸다 같은 문구로 다시 보낸다(최대 2회, 30초·90초).
+            if _is_cloudflare_challenge(_read_error_body(e)) and cf_retries < 2:
+                wait = 30 if cf_retries == 0 else 90
+                cf_retries += 1
+                print(f"[post_x] Cloudflare 확인 페이지 응답, {wait}초 후 같은 문구로 재시도 ({cf_retries}/2)")
+                time.sleep(wait)
+                continue
             print(f"[post_x] {last_err} (시도 {i + 1}/{max_tries}), 문구 변형 후 재시도")
+            variant += 1
+            i += 1
     raise last_err
 
 
