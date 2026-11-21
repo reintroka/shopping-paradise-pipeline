@@ -30,6 +30,25 @@ def run(cmd, cwd=None):
     subprocess.run(cmd, cwd=cwd, check=True)
 
 
+def clone_with_retry(dest, max_tries: int = 3) -> None:
+    """2026-11-21: 클라우드에서 clone이 한 번 exit 128로 실패해 롱폼 6장이 번호 없이 나갔다
+    (같은 날 쇼츠·로컬 clone은 정상 → 일시적 연결 문제). push처럼 clone도 다시 시도한다."""
+    import shutil
+    import time
+    for attempt in range(1, max_tries + 1):
+        try:
+            run(["git", "clone", "--depth", "1", REPO_URL, dest])
+            return
+        except subprocess.CalledProcessError as e:
+            if attempt == max_tries:
+                raise
+            wait = 10 if attempt == 1 else 30
+            print(f"[update_link_page] clone 실패(시도 {attempt}/{max_tries}): {e} — {wait}초 후 재시도")
+            for child in Path(dest).iterdir():   # 반쯤 받은 파일이 남으면 다음 clone이 거부됨
+                shutil.rmtree(child) if child.is_dir() else child.unlink()
+            time.sleep(wait)
+
+
 def push_with_retry(repo_dir, max_tries: int = 3) -> None:
     """run_pipeline.py의 push_with_retry와 동일한 이유로 `HEAD:main`을 명시한다
     (2026-08-28, 클라우드 샌드박스가 detached HEAD로 클론하는 경우 대비)."""
@@ -55,7 +74,7 @@ def next_rank(html: str) -> int:
 
 def add_card(product_name: str, price: str, coupang_url: str, hook_line: str, image_url: str = ""):
     with tempfile.TemporaryDirectory() as tmp:
-        run(["git", "clone", "--depth", "1", REPO_URL, tmp])
+        clone_with_retry(tmp)
         index_path = Path(tmp) / "index.html"
         html = index_path.read_text(encoding="utf-8")
 
@@ -95,7 +114,7 @@ def add_cards(items: list) -> list:
     연속 번호로 모이게 하고, 옛 쇼츠 영상에 박힌 옛 번호는 그대로 살려 두기 위함.
     items: [{"title", "price", "url", "sub", "image"}] (보여 줄 순서대로 — 앞쪽이 작은 번호)."""
     with tempfile.TemporaryDirectory() as tmp:
-        run(["git", "clone", "--depth", "1", REPO_URL, tmp])
+        clone_with_retry(tmp)
         index_path = Path(tmp) / "index.html"
         html = index_path.read_text(encoding="utf-8")
         if ITEMS_MARKER not in html:
